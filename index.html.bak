@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Front Wars</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1f1e;color:#c4a458;font-family:monospace;overflow:hidden;height:100vh;display:flex}
+#main{display:flex;flex:1}
+#game{flex:1;cursor:grab}
+#game:active{cursor:grabbing}
+#sidebar{width:200px;background:#2d3a2c;padding:10px;display:flex;flex-direction:column;gap:8px;border-left:2px solid #4a7c3f}
+#sidebar h2{color:#4a7c3f;font-size:14px;margin-bottom:2px}
+#sidebar .info{background:#1a1f1e;padding:8px;border-radius:4px;font-size:12px;line-height:1.6;min-height:80px}
+#sidebar .info span{color:#4a90d9}
+#sidebar button{background:#4a7c3f;color:#1a1f1e;border:none;padding:8px;cursor:pointer;font-weight:bold;font-size:13px;border-radius:4px}
+#sidebar button:hover{background:#c4a458}
+#minimap{position:fixed;bottom:10px;right:210px;border:2px solid #4a7c3f;background:rgba(0,0,0,0.6);z-index:10}
+#funds{color:#c4a458;font-size:16px;font-weight:bold}
+#phase{color:#4a7c3f;font-size:11px}
+
+/* Campaign + Menu */
+#menu-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:100;flex-direction:column;gap:16px}
+#menu-overlay h1{color:#c4a458;font-size:32px;text-shadow:0 0 20px #c4a45840}
+#menu-overlay button{background:#4a7c3f;color:#1a1f1e;border:none;padding:12px 28px;font-size:16px;font-weight:bold;border-radius:6px;cursor:pointer;min-width:200px}
+#menu-overlay button:hover{background:#c4a458}
+#mission-intro{color:#e0e0e0;max-width:400px;text-align:center;line-height:1.6;font-size:13px}
+/* Purchase panel */
+#buy-panel{display:none;position:fixed;bottom:10px;left:50%;transform:translateX(-50%);background:#2d3a2c;border:2px solid #4a7c3f;border-radius:6px;padding:8px;gap:4px;z-index:20;flex-wrap:wrap;max-width:90vw}
+#buy-panel button{background:#1a1f1e;color:#c4a458;border:1px solid #4a7c3f;padding:6px 10px;font-size:11px;border-radius:4px;cursor:pointer;min-width:70px}
+#buy-panel button:hover{background:#4a7c3f;color:#1a1f1e}
+/* Game over */
+#game-over{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);align-items:center;justify-content:center;z-index:100;flex-direction:column;gap:12px}
+#game-over h2{font-size:28px}
+#game-over button{background:#c4a458;color:#1a1f1e;border:none;padding:10px 24px;font-size:14px;font-weight:bold;border-radius:4px;cursor:pointer}
+/* Responsive */
+@media(max-width:600px){#sidebar{width:160px;font-size:10px}#sidebar button{font-size:11px;padding:6px}#menu-overlay h1{font-size:24px}}
+#sidebar button:disabled{opacity:0.4;cursor:default}
+</style>
+</head>
+<body>
+<div id="main">
+<canvas id="game"></canvas>
+<div id="sidebar">
+<h2>FRONT WARS</h2>
+<div id="funds">$ 5000</div>
+<div id="phase">YOUR TURN</div>
+<div class="info" id="info">Select a unit</div>
+<button id="endTurn">End Turn</button>
+</div>
+</div>
+<canvas id="minimap" width="140" height="140"></canvas>
+
+<div id="menu-overlay">
+  <h1>⚔ FRONT WARS</h1>
+  <button id="btn-new-game">New Game</button>
+  <button id="btn-campaign">Campaign</button>
+  <button id="btn-multiplayer">2-Player Local</button>
+  <button id="btn-continue" style="display:none">Continue</button>
+</div>
+
+<div id="game-over" style="display:none">
+  <h2 id="go-title"></h2>
+  <p id="go-sub" style="color:#e0e0e0;font-size:14px"></p>
+  <button id="btn-restart">Play Again</button>
+  <button id="btn-menu">Main Menu</button>
+</div>
+
+<div id="mission-intro" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.9);align-items:center;justify-content:center;z-index:100;flex-direction:column;gap:16px">
+  <h2 id="mi-title" style="color:#c4a458;font-size:20px"></h2>
+  <p id="mi-text" style="color:#e0e0e0;max-width:420px;text-align:center;line-height:1.6;font-size:13px"></p>
+  <button id="btn-mission-start" style="background:#4a7c3f;color:#1a1f1e;border:none;padding:10px 24px;font-size:14px;font-weight:bold;border-radius:4px;cursor:pointer">Begin Mission</button>
+</div>
+
+<div id="buy-panel"></div>
+
+<script>
+/* ============ ENGINE ============ */
+     1|// Front Wars Game Engine — Pure game logic, no rendering
+     2|// Based on DESIGN.md research document
+     3|
+     4|class Terrain {
+     5|  static TYPES = {
+     6|    plains:   { defense: 0, moves: { F: 1, T: 1, W: 2 }, color: '#4a7c3f', name: 'Plains' },
+     7|    forest:   { defense: 3, moves: { F: 1, T: 2, W: 3 }, color: '#2d5a1e', name: 'Forest' },
+     8|    mountain: { defense: 4, moves: { F: 2, T: 99, W: 99 }, color: '#6b6b6b', name: 'Mountain' },
+     9|    road:     { defense: 0, moves: { F: 1, T: 1, W: 1 }, color: '#c4a458', name: 'Road' },
+    10|    sea:      { defense: 0, moves: { F: 99, T: 99, W: 99 }, color: '#1a4d7e', name: 'Sea' },
+    11|    city:     { defense: 3, moves: { F: 1, T: 1, W: 1 }, color: '#8b7355', name: 'City', income: 1000, canBuild: true },
+    12|    hq:       { defense: 4, moves: { F: 1, T: 1, W: 1 }, color: '#8b0000', name: 'HQ', income: 2000, canBuild: true },
+    13|  };
+    14|
+    15|  constructor(type) {
+    16|    this.type = type;
+    17|    const def = Terrain.TYPES[type];
+    18|    this.defense = def.defense;
+    19|    this.moves = def.moves;
+    20|    this.color = def.color;
+    21|    this.name = def.name;
+    22|    this.income = def.income || 0;
+    23|    this.canBuild = def.canBuild || false;
+    24|  }
+    25|
+    26|  moveCost(moveType) {
+    27|    return this.moves[moveType] ?? 99;
+    28|  }
+    29|}
+    30|
+    31|class UnitTypes {
+    32|  static ALL = {
+    33|    infantry:  { cost: 1000, move: 3, vision: 2, atk: 1, def: 1, range: 1, moveType: 'F', name: 'Infantry', captures: true, icon: '▲' },
+    34|    mech:      { cost: 3000, move: 2, vision: 2, atk: 5, def: 2, range: 1, moveType: 'F', name: 'Mech', captures: true, icon: '◆' },
+    35|    recon:     { cost: 4000, move: 8, vision: 5, atk: 3, def: 1, range: 1, moveType: 'W', name: 'Recon', icon: '●' },
+    36|    tank:      { cost: 7000, move: 6, vision: 3, atk: 6, def: 3, range: 1, moveType: 'T', name: 'Tank', icon: '■' },
+    37|    artillery: { cost: 6000, move: 5, vision: 1, atk: 6, def: 2, range: 3, moveType: 'W', name: 'Artillery', indirect: true, icon: '⬟' },
+    38|    anti_air:  { cost: 8000, move: 6, vision: 2, atk: 5, def: 3, range: 1, moveType: 'T', name: 'Anti-Air', icon: '✖' },
+    39|    apc:       { cost: 5000, move: 6, vision: 1, atk: 0, def: 1, range: 0, moveType: 'W', name: 'APC', icon: '◇' },
+    40|  };
+    41|
+    42|  static get(typeName) { return this.ALL[typeName]; }
+    43|}
+    44|
+    45|class Unit {
+    46|  static _idCounter = 0;
+    47|  constructor(owner, type, x, y) {
+    48|    this.id = ++Unit._idCounter;
+    49|    this.owner = owner; // 0 = Player 1, 1 = Player 2 / AI
+    50|    this.type = type;
+    51|    const def = UnitTypes.get(type);
+    52|    this.maxHp = 10;
+    53|    this.hp = 10;
+    54|    this.atk = def.atk;
+    55|    this.def = def.def;
+    56|    this.moveRange = def.move;
+    57|    this.visionRange = def.vision;
+    58|    this.atkRange = def.range;
+    59|    this.cost = def.cost;
+    60|    this.moveType = def.moveType;
+    61|    this.name = def.name;
+    62|    this.icon = def.icon;
+    63|    this.captures = def.captures || false;
+    64|    this.indirect = def.indirect || false;
+    65|    this.x = x;
+    66|    this.y = y;
+    67|    this.hasMoved = false;
+    68|    this.hasAttacked = false;
+    69|    this.kills = 0;
+    70|    this.promoted = false;
+    71|    if (def.canTransport) this.canTransport = true;
+    72|  }
+    73|}
+    74|
+    75|class MapGrid {
+    76|  constructor(width, height) {
+    77|    this.width = width;
+    78|    this.height = height;
+    79|    this.cells = [];
+    80|    for (let y = 0; y < height; y++) {
+    81|      this.cells[y] = [];
+    82|      for (let x = 0; x < width; x++) {
+    83|        this.cells[y][x] = { terrain: new Terrain('plains'), unit: null };
+    84|      }
+    85|    }
+    86|  }
+    87|
+    88|  setTerrain(x, y, type) {
+    89|    if (x >= 0 && x < this.width && y >= 0 && y < this.height) {
+    90|      this.cells[y][x].terrain = new Terrain(type);
+    91|    }
+    92|  }
+    93|
+    94|  placeUnit(unit) {
+    95|    const cell = this.cells[unit.y]?.[unit.x];
+    96|    if (cell && !cell.unit) {
+    97|      cell.unit = unit;
+    98|      return true;
+    99|    }
+   100|    return false;
+   101|  }
+   102|
+   103|  removeUnit(x, y) {
+   104|    const cell = this.cells[y]?.[x];
+   105|    if (cell) {
+   106|      cell.unit = null;
+   107|    }
+   108|  }
+   109|
+   110|  getCell(x, y) {
+   111|    return this.cells[y]?.[x] || null;
+   112|  }
+   113|
+   114|  isInBounds(x, y) {
+   115|    return x >= 0 && x < this.width && y >= 0 && y < this.height;
+   116|  }
+   117|}
+   118|
+   119|// Pre-built maps
+   120|MapGrid.map1 = function() {
+   121|  const m = new MapGrid(10, 10);
+   122|  const setup = [
+   123|    'pppppppppp',
+   124|    'ppccppccpp',
+   125|    'pppppppppp',
+   126|    'pppppppppp',
+   127|    'pppppppppp',
+   128|    'pppppppppp',
+   129|    'pppppppppp',
+   130|    'ppccppccpp',
+   131|    'pppppppppp',
+   132|    'pppppppppp',
+   133|  ];
+   134|  for (let y = 0; y < 10; y++) {
+   135|    for (let x = 0; x < 10; x++) {
+   136|      const ch = setup[y][x];
+   137|      if (ch === 'c') m.setTerrain(x, y, 'city');
+   138|    }
+   139|  }
+   140|  m.setTerrain(0, 0, 'hq');
+   141|  m.setTerrain(9, 9, 'hq');
+   142|  return m;
+   143|};
+   144|
+   145|MapGrid.map2 = function() {
+   146|  const m = new MapGrid(15, 15);
+   147|  for (let y = 0; y < 15; y++) {
+   148|    for (let x = 0; x < 15; x++) {
+   149|      if ((x + y) % 5 === 0 && x > 0 && x < 14 && y > 0 && y < 14) m.setTerrain(x, y, 'city');
+   150|      if (x === 7 && y >= 2 && y <= 12) m.setTerrain(x, y, 'mountain');
+   151|      if (y === 7 && x >= 2 && x <= 12 && x !== 7) m.setTerrain(x, y, 'forest');
+   152|    }
+   153|  }
+   154|  m.setTerrain(0, 1, 'hq');
+   155|  m.setTerrain(14, 13, 'hq');
+   156|  return m;
+   157|};
+   158|
+   159|MapGrid.map3 = function() {
+   160|  const m = new MapGrid(20, 20);
+   161|  // Rivers, forests, and scattered cities
+   162|  for (let y = 0; y < 20; y++) {
+   163|    for (let x = 0; x < 20; x++) {
+   164|      if ((x + y) % 7 === 0) m.setTerrain(x, y, 'forest');
+   165|      if (Math.abs(x - y) < 2 && x > 3 && x < 16) m.setTerrain(x, y, 'sea');
+   166|    }
+   167|  }
+   168|  // Cities in clusters
+   169|  const cities = [[3,3],[3,16],[7,8],[7,10],[12,8],[12,12],[16,3],[16,16]];
+   170|  cities.forEach(([cx, cy]) => m.setTerrain(cx, cy, 'city'));
+   171|  m.setTerrain(1, 1, 'hq');
+   172|  m.setTerrain(18, 18, 'hq');
+   173|  return m;
+   174|};
+   175|
+   176|class GameState {
+   177|  constructor(map, playerNames = ['Player', 'AI']) {
+   178|    this.map = map;
+   179|    this.units = [];
+   180|    this.players = [{
+   181|      name: playerNames[0], funds: 5000, color: '#4a90d9', alive: true,
+   182|    }, {
+   183|      name: playerNames[1], funds: 5000, color: '#d94a4a', alive: true,
+   184|    }];
+   185|    this.currentPlayer = 0;
+   186|    this.turn = 0;
+   187|    this.phase = 'idle'; // idle, move, attack
+   188|    this.selectedUnit = null;
+    this.fogOfWar = false;
+    this.revealedTiles = {}; // `${x},${y}` → true (persistent)
+    this.captureProgress = {}; // `${x},${y}` → { owner, progress }
+    this.gameOver = false;
+    this.winner = null;
+    this.campaignMode = null; // { mission: N, playerKills: Map<unitId, count> }
+    this.incomePerTurn = 1000; // base income
+   195|  }
+   196|
+   197|  addUnit(unit) {
+   198|    if (this.map.placeUnit(unit)) {
+   199|      this.units.push(unit);
+   200|      return true;
+   201|    }
+   202|    return false;
+   203|  }
+   204|
+   205|  getPlayerUnits(playerIndex) {
+   206|    return this.units.filter(u => u.owner === playerIndex && u.hp > 0);
+   207|  }
+   208|
+   209|  removeDestroyed() {
+   210|    this.units = this.units.filter(u => {
+   211|      if (u.hp <= 0) {
+   212|        this.map.removeUnit(u.x, u.y);
+   213|        return false;
+   214|      }
+   215|      return true;
+   216|    });
+   217|  }
+   218|
+   219|  getMoveRange(unit) {
+   220|    if (!unit || unit.hasMoved) return [];
+   221|    const visited = new Map();
+   222|    const queue = [{ x: unit.x, y: unit.y, mp: unit.moveRange }];
+   223|    const key = (x, y) => `${x},${y}`;
+   224|    visited.set(key(unit.x, unit.y), true);
+   225|
+   226|    const valid = [];
+   227|    const dirs = [[0, 1], [1, 0], [0, -1], [-1, 0]];
+   228|
+   229|    while (queue.length > 0) {
+   230|      const { x, y, mp } = queue.shift();
+   231|      for (const [dx, dy] of dirs) {
+   232|        const nx = x + dx, ny = y + dy;
+   233|        const nk = key(nx, ny);
+   234|        if (!this.map.isInBounds(nx, ny) || visited.has(nk)) continue;
+   235|        const cell = this.map.getCell(nx, ny);
+   236|        if (!cell) continue;
+   237|        const cost = cell.terrain.moveCost(unit.moveType);
+   238|        if (cost >= 99) continue;
+   239|        const newMp = mp - cost;
+   240|        if (newMp < 0) continue;
+   241|        if (cell.unit && cell.unit.owner !== unit.owner) continue; // blocked by enemy
+   242|        visited.set(nk, true);
+   243|        if (newMp >= 0) {
+   244|          valid.push({ x: nx, y: ny });
+   245|          if (newMp > 0) queue.push({ x: nx, y: ny, mp: newMp });
+   246|        }
+   247|      }
+   248|    }
+   249|    return valid.filter(m => !(m.x === unit.x && m.y === unit.y));
+   250|  }
+   251|
+   252|  getAttackTargets(unit) {
+   253|    if (!unit || unit.hasAttacked || unit.atkRange === 0) return [];
+   254|    const targets = [];
+   255|    for (const other of this.units) {
+   256|      if (other.owner === unit.owner || other.hp <= 0) continue;
+   257|      const dist = Math.abs(unit.x - other.x) + Math.abs(unit.y - other.y);
+   258|      if (dist > unit.atkRange) continue;
+   259|      if (dist === 1) { targets.push(other); continue; }
+   260|      // Indirect: line of sight not required for artillery type
+   261|      if (unit.indirect) { targets.push(other); continue; }
+   262|      // Direct ranged: simple line-of-sight check (no mountains blocking)
+   263|      if (this._hasLineOfSight(unit.x, unit.y, other.x, other.y)) {
+   264|        targets.push(other);
+   265|      }
+   266|    }
+   267|    return targets;
+   268|  }
+   269|
+   270|  _hasLineOfSight(x1, y1, x2, y2) {
+   271|    const dx = Math.abs(x2 - x1), dy = Math.abs(y2 - y1);
+   272|    const sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1;
+   273|    let err = dx - dy, x = x1, y = y1;
+   274|    while (x !== x2 || y !== y2) {
+   275|      const e2 = 2 * err;
+   276|      if (e2 > -dy) { err -= dy; x += sx; }
+   277|      if (e2 < dx) { err += dx; y += sy; }
+   278|      if (x === x2 && y === y2) break;
+   279|      const cell = this.map.getCell(x, y);
+   280|      if (cell && cell.terrain.type === 'mountain') return false;
+   281|    }
+   282|    return true;
+   283|  }
+   284|
+   285|  resolveCombat(attacker, defender) {
+   286|    const baseDamage = Math.floor(attacker.atk * 0.5 + Math.random() * attacker.atk * 0.5);
+   287|    const hpRatio = attacker.hp / attacker.maxHp;
+   288|    const defHpMod = defender.hp / defender.maxHp;
+   289|    const terrainMod = 1 - (this.map.getCell(defender.x, defender.y)?.terrain.defense * 0.1);
+   290|    let damage = Math.max(1, Math.floor(baseDamage * hpRatio * defHpMod * terrainMod));
+   291|    defender.hp = Math.max(0, defender.hp - damage);
+   292|
+   293|    let counterDamage = 0;
+   294|    if (defender.hp > 0 && defender.atkRange > 0) {
+   295|      const dist = Math.abs(attacker.x - defender.x) + Math.abs(attacker.y - defender.y);
+   296|      if (dist <= defender.atkRange && !(dist > 1 && !defender.indirect)) {
+   297|        const counterHp = defender.hp / defender.maxHp;
+   298|        counterDamage = Math.max(1, Math.floor(defender.atk * 0.3 * counterHp));
+   299|        attacker.hp = Math.max(0, attacker.hp - counterDamage);
+   300|      }
+   301|    }
+   302|
+   303|    if (defender.hp <= 0) {
+   304|      this.map.removeUnit(defender.x, defender.y);
+   305|      attacker.kills++;
+   306|      if (attacker.kills >= 3 && !attacker.promoted) {
+   307|        attacker.promoted = true;
+   308|        attacker.atk += 1;
+   309|      }
+   310|    }
+   311|
+   312|    attacker.hasAttacked = true;
+   313|    return { damage, counterDamage, destroyed: defender.hp <= 0 };
+   314|  }
+   315|
+   316|  moveUnit(unit, x, y) {
+   317|    this.map.removeUnit(unit.x, unit.y);
+   318|    unit.x = x;
+   319|    unit.y = y;
+   320|    unit.hasMoved = true;
+   321|    const cell = this.map.getCell(x, y);
+   322|    if (cell) cell.unit = unit;
+   323|
+   324|    // Check capture
+   325|    if (unit.captures) {
+   326|      const t = cell?.terrain;
+   327|      if ((t.type === 'city' || t.type === 'hq') && cell.unit === unit) {
+   328|        const capKey = `${x},${y}`;
+   329|        if (!this.captureProgress[capKey]) this.captureProgress[capKey] = 0;
+   330|        this.captureProgress[capKey] += unit.hp;
+   331|        if (this.captureProgress[capKey] >= 10) {
+   332|          delete this.captureProgress[capKey];
+   333|          if (t.type === 'hq') {
+   334|            this._declareVictor(unit.owner);
+   335|          }
+   336|          return { captured: true };
+   337|        }
+   338|      }
+   339|    }
+   340|    return { captured: false };
+   341|  }
+   342|
+   343|  _declareVictor(playerIndex) {
+   344|    this.gameOver = true;
+   345|    this.winner = playerIndex;
+   346|    this.players[playerIndex ^ 1].alive = false;
+   347|  }
+   348|
+   349|  endTurn() {
+   350|    // Check for destruction victory
+   351|    const p1Units = this.getPlayerUnits(this.currentPlayer ^ 1);
+   352|    if (p1Units.length === 0) {
+   353|      this._declareVictor(this.currentPlayer);
+   354|      return;
+   355|    }
+   356|    if (this.currentPlayer === 0 && this.getPlayerUnits(1).length === 0) {
+   357|      this._declareVictor(0);
+   358|      return;
+   359|    }
+   360|
+   361|    this.currentPlayer = 1;
+   362|    this.turn++;
+   363|    this.resetAllUnits();
+   364|
+   365|    if (this.currentPlayer === 1 && !this.gameOver) {
+   366|      this.aiTurn();
+   367|    }
+   368|  }
+   369|
+   370|  resetAllUnits() {
+   371|    for (const u of this.units) {
+   372|      u.hasMoved = false;
+   373|      u.hasAttacked = false;
+   374|    }
+   375|    this.calculateFunds();
+   376|  }
+   377|
+  calculateFunds() {
+    const income = this.getPlayerUnits(this.currentPlayer).reduce((sum) => sum, 0);
+    // Count owned cities
+    let totalIncome = 0;
+    for (let y = 0; y < this.map.height; y++) {
+      for (let x = 0; x < this.map.width; x++) {
+        const cell = this.map.getCell(x, y);
+        if (!cell) continue;
+        const t = cell.terrain;
+        let owned = false;
+        if (t.type === 'hq') {
+          const u = cell.unit;
+          owned = u ? (u.owner === this.currentPlayer) : (this.turn < 2);
+        }
+        if (t.type === 'city') {
+          if (cell.unit && cell.unit.captures) {
+            owned = cell.unit.owner === this.currentPlayer;
+          } else {
+            owned = false;
+          }
+        }
+        if (owned && t.income) totalIncome += t.income;
+      }
+    }
+    totalIncome += 1000 * (this.currentPlayer === 0 ? 1 : 1);
+    this.incomePerTurn = totalIncome;
+    this.players[this.currentPlayer].funds += totalIncome;
+  }
+   406|
+   407|  buyUnit(typeName, spawnX, spawnY) {
+   408|    const p = this.players[this.currentPlayer];
+   409|    const def = UnitTypes.get(typeName);
+   410|    if (!def || p.funds < def.cost) return null;
+   411|    const cell = this.map.getCell(spawnX, spawnY);
+   412|    if (!cell || cell.unit) return null;
+   413|    if (!cell.terrain.canBuild) return null;
+   414|    p.funds -= def.cost;
+   415|    const unit = new Unit(this.currentPlayer, typeName, spawnX, spawnY);
+   416|    this.addUnit(unit);
+   417|    return unit;
+   418|  }
+   419|
+   420|  setFogOfWar(enabled) {
+   421|    this.fogOfWar = enabled;
+   422|  }
+   423|
+   424|  calculateFog() {
+   425|    if (!this.fogOfWar) return { visible: null, revealed: null };
+   426|    const visible = new Set();
+   427|    for (const u of this.getPlayerUnits(this.currentPlayer)) {
+   428|      for (let dy = -u.visionRange; dy <= u.visionRange; dy++) {
+   429|        for (let dx = -u.visionRange; dx <= u.visionRange; dx++) {
+   430|          if (Math.abs(dx) + Math.abs(dy) > u.visionRange) continue;
+   431|          const nx = u.x + dx, ny = u.y + dy;
+   432|          if (this.map.isInBounds(nx, ny)) {
+   433|            const k = `${nx},${ny}`;
+   434|            visible.add(k);
+   435|            this.revealedTiles[k] = true;
+   436|          }
+   437|        }
+   438|      }
+   439|    }
+   440|    return { visible, revealed: this.revealedTiles };
+   441|  }
+   442|
+   443|  // === AI ===
+   444|  aiTurn() {
+   445|    const aiUnits = this.getPlayerUnits(1);
+   446|    const playerUnits = this.getPlayerUnits(0);
+   447|
+   448|    for (const unit of aiUnits) {
+   449|      if (unit.hp <= 0 || unit.hasMoved) continue;
+   450|
+   451|      // Find nearest player unit
+   452|      let nearest = null, nearestDist = Infinity;
+   453|      for (const pu of playerUnits) {
+   454|        const d = Math.abs(unit.x - pu.x) + Math.abs(unit.y - pu.y);
+   455|        if (d < nearestDist) { nearestDist = d; nearest = pu; }
+   456|      }
+   457|
+   458|      const targets = this.getAttackTargets(unit);
+   459|      if (targets.length > 0) {
+   460|        if (!unit.hasMoved) {
+   461|          // Move toward nearest target if not in range
+   462|          if (!targets.includes(nearest) && nearest) {
+   463|            const moves = this.getMoveRange(unit);
+   464|            if (moves.length > 0) {
+   465|              moves.sort((a, b) => {
+   466|                const da = Math.abs(a.x - nearest.x) + Math.abs(a.y - nearest.y);
+   467|                const db = Math.abs(b.x - nearest.x) + Math.abs(b.y - nearest.y);
+   468|                return da - db;
+   469|              });
+   470|              const best = moves[0];
+   471|              this.moveUnit(unit, best.x, best.y);
+   472|            }
+   473|          }
+   474|          // Recheck targets after move
+   475|          const newTargets = this.getAttackTargets(unit);
+   476|          if (newTargets.length > 0) {
+   477|            const t = newTargets.reduce((best, t) =>
+   478|              (t.hp < best.hp || (!best) ? t : best), null);
+   479|            this.resolveCombat(unit, t);
+   480|            this.removeDestroyed();
+   481|          }
+   482|        } else {
+   483|          const t = targets.reduce((best, t) =>
+   484|            (t.hp < best.hp || (!best) ? t : best), null);
+   485|          this.resolveCombat(unit, t);
+   486|          this.removeDestroyed();
+   487|        }
+   488|      } else {
+   489|        // Move toward nearest enemy
+   490|        if (nearest) {
+   491|          const moves = this.getMoveRange(unit);
+   492|          if (moves.length > 0) {
+   493|            moves.sort((a, b) => {
+   494|              const da = Math.abs(a.x - nearest.x) + Math.abs(a.y - nearest.y);
+   495|              const db = Math.abs(b.x - nearest.x) + Math.abs(b.y - nearest.y);
+   496|              return da - db;
+   497|            });
+   498|            this.moveUnit(unit, moves[0].x, moves[0].y);
+   499|          }
+   500|        }
+   501|      }
+   502|    }
+   503|
+   504|    // AI buys units if it has funds
+   505|    if (this.players[1].funds >= 7000 && this.turn % 2 === 0) {
+   506|      // Find a buildable cell
+   507|      for (let y = 0; y < this.map.height; y++) {
+   508|        for (let x = 0; x < this.map.width; x++) {
+   509|          const cell = this.map.getCell(x, y);
+   510|          if (cell?.terrain.canBuild && !cell.unit) {
+   511|            const type = Math.random() > 0.5 ? 'tank' : 'infantry';
+   512|            if (this.players[1].funds >= UnitTypes.get(type).cost) {
+   513|              this.buyUnit(type, x, y);
+   514|            }
+   515|            break;
+   516|          }
+   517|        }
+   518|      }
+   519|    }
+   520|
+   521|    this.currentPlayer = 0;
+   522|    this.turn++;
+   523|    this.resetAllUnits();
+   524|    this.removeDestroyed();
+   525|
+   526|    // Check victory
+   527|    if (this.getPlayerUnits(0).length === 0) {
+   528|      this._declareVictor(1);
+   529|    }
+   530|  }
+   531|
+   532|  // === Serialization ===
+   533|  save() {
+   534|    return JSON.stringify({
+   535|      mapW: this.map.width, mapH: this.map.height,
+   536|      cells: this.map.cells.map(row => row.map(c => ({
+   537|        terrain: c.terrain.type,
+   538|        unit: c.unit ? { id: c.unit.id } : null,
+   539|      }))),
+   540|      units: this.units.map(u => ({
+   541|        id: u.id, owner: u.owner, type: u.type, hp: u.hp,
+   542|        x: u.x, y: u.y, hasMoved: u.hasMoved, hasAttacked: u.hasAttacked,
+   543|        kills: u.kills, promoted: u.promoted,
+   544|      })),
+   545|      players: this.players,
+   546|      turn: this.turn, currentPlayer: this.currentPlayer,
+   547|      fogOfWar: this.fogOfWar, revealedTiles: this.revealedTiles,
+   548|      captureProgress: this.captureProgress,
+   549|      campaignMode: this.campaignMode,
+   550|    });
+   551|  }
+   552|
+   553|  static load(json) {
+   554|    const data = JSON.parse(json);
+   555|    const map = new MapGrid(data.mapW, data.mapH);
+   556|    for (let y = 0; y < data.mapH; y++) {
+   557|      for (let x = 0; x < data.mapW; x++) {
+   558|        if (data.cells[y][x]?.terrain) {
+   559|          map.setTerrain(x, y, data.cells[y][x].terrain);
+   560|        }
+   561|      }
+   562|    }
+   563|    const state = new GameState(map);
+   564|    state.players = data.players;
+   565|    state.turn = data.turn;
+   566|    state.currentPlayer = data.currentPlayer;
+   567|    state.fogOfWar = data.fogOfWar;
+   568|    state.revealedTiles = data.revealedTiles || {};
+   569|    state.captureProgress = data.captureProgress || {};
+   570|    state.campaignMode = data.campaignMode || null;
+   571|    state.units = [];
+   572|    for (const ud of data.units) {
+   573|      const u = new Unit(ud.owner, ud.type, ud.x, ud.y);
+   574|      u.id = ud.id;
+   575|      u.hp = ud.hp;
+   576|      u.hasMoved = ud.hasMoved;
+   577|      u.hasAttacked = ud.hasAttacked;
+   578|      u.kills = ud.kills;
+   579|      u.promoted = ud.promoted;
+   580|      state.addUnit(u);
+   581|    }
+   582|    return state;
+   583|  }
+   584|}
+   585|
+   586|// === Campaign ===
+   587|const Campaign = {
+   588|  missions: [
+   589|    {
+   590|      id: 1, name: 'Boot Camp', map: MapGrid.map1,
+   591|      intro: 'Welcome to Front Wars, Commander. The enemy has occupied the western territories. Lead your infantry into your first engagement. Capture the enemy HQ to secure victory.',
+   592|      playerUnits: [{ type: 'infantry', x: 1, y: 0 }, { type: 'infantry', x: 1, y: 1 }],
+   593|      enemyUnits: [{ type: 'infantry', x: 8, y: 9 }, { type: 'infantry', x: 7, y: 9 }],
+   594|      fog: false,
+   595|    },
+   596|    {
+   597|      id: 2, name: 'Armored Advance', map: MapGrid.map2,
+   598|      intro: 'Your success has caught the enemy off guard. They\'re reinforcing their position with armor. Deploy your tanks and push through the mountain pass.',
+   599|      playerUnits: [{ type: 'tank', x: 1, y: 0 }, { type: 'infantry', x: 0, y: 2 }, { type: 'recon', x: 2, y: 1 }],
+   600|      enemyUnits: [{ type: 'tank', x: 13, y: 14 }, { type: 'infantry', x: 14, y: 12 }, { type: 'mech', x: 12, y: 13 }],
+   601|      fog: false,
+   602|    },
+   603|    {
+   604|      id: 3, name: 'Fog of War', map: MapGrid.map3,
+   605|      intro: 'Intel reports show a large enemy force advancing under cover of darkness. Visibility is limited — watch your flanks. Deploy recon units to scout ahead.',
+   606|      playerUnits: [{ type: 'recon', x: 2, y: 0 }, { type: 'tank', x: 1, y: 2 }, { type: 'artillery', x: 0, y: 1 }, { type: 'infantry', x: 2, y: 1 }],
+   607|      enemyUnits: [{ type: 'tank', x: 17, y: 19 }, { type: 'artillery', x: 18, y: 17 }, { type: 'infantry', x: 19, y: 18 }, { type: 'anti_air', x: 16, y: 18 }],
+   608|      fog: true,
+   609|    },
+   610|    {
+   611|      id: 4, name: 'Naval Blockade', map: MapGrid.map3,
+   612|      intro: 'The enemy has fortified their island stronghold. Combined arms are essential — infantry to capture, artillery to bombard, and tanks to break through.',
+   613|      playerUnits: [{ type: 'tank', x: 3, y: 1 }, { type: 'artillery', x: 1, y: 3 }, { type: 'infantry', x: 2, y: 0 }, { type: 'anti_air', x: 0, y: 2 }, { type: 'mech', x: 3, y: 2 }],
+   614|      enemyUnits: [{ type: 'tank', x: 17, y: 18 }, { type: 'tank', x: 16, y: 19 }, { type: 'artillery', x: 18, y: 16 }, { type: 'infantry', x: 19, y: 17 }, { type: 'mech', x: 17, y: 17 }],
+   615|      fog: false,
+   616|    },
+   617|    {
+   618|      id: 5, name: 'Final Stand', map: MapGrid.map3,
+   619|      intro: 'This is it, Commander. The enemy has thrown everything at us. All unit types are in play. Destroy their HQ and end this war once and for all.',
+   620|      playerUnits: [{ type: 'tank', x: 1, y: 1 }, { type: 'artillery', x: 0, y: 3 }, { type: 'infantry', x: 2, y: 0 }, { type: 'recon', x: 3, y: 1 }, { type: 'anti_air', x: 1, y: 2 }],
+   621|      enemyUnits: [{ type: 'tank', x: 18, y: 18 }, { type: 'artillery', x: 19, y: 16 }, { type: 'infantry', x: 17, y: 19 }, { type: 'mech', x: 18, y: 17 }, { type: 'anti_air', x: 16, y: 19 }, { type: 'recon', x: 19, y: 18 }],
+   622|      fog: true,
+   623|    },
+   624|  ],
+   625|};
+   626|
+/* ============ RENDERING + INTERACTIVE ============ */
+const T=56,canvas=document.getElementById('game'),ctx=canvas.getContext('2d'),
+  mini=document.getElementById('minimap'),mctx=mini.getContext('2d');
+let gs,fog,vx=0,vy=0,drag=false,dx,dy,dvx,dvy,sel=null,moves=[],targets=[],floating=[],aiActive=false;
+let buildTiles=[],buyOpen=false,mpMode=false,mpPlayer=0,campaignMission=null;
+
+const TCOL={plains:'#4a7c3f',forest:'#2d5a1e',mountain:'#6b6b6b',road:'#c4a458',sea:'#1a4d7e',city:'#8b7355',hq:'#8b0000'};
+const PCOL=['#4a90d9','#d94a4a'];
+
+function init(){
+  const map=MapGrid.map1();
+  gs=new GameState(map);
+  gs.setFogOfWar(true);
+  gs.addUnit(new Unit(0,'infantry',1,0)); gs.addUnit(new Unit(0,'infantry',2,0));
+  gs.addUnit(new Unit(0,'tank',0,1));
+  gs.addUnit(new Unit(1,'infantry',7,9)); gs.addUnit(new Unit(1,'infantry',8,9));
+  gs.addUnit(new Unit(1,'tank',9,8));
+  fog=gs.calculateFog();
+  hookGame(); resize(); render();
+}
+
+function resize(){canvas.width=canvas.clientWidth;canvas.height=canvas.clientHeight}
+function clamp(){vx=Math.max(0,Math.min(vx,gs.map.width*T-canvas.width));vy=Math.max(0,Math.min(vy,gs.map.height*T-canvas.height))}
+
+function drawIcon(t,sx,sy){
+  if(t==='city'){
+    ctx.fillStyle='rgba(200,180,140,0.5)'; ctx.fillRect(sx+T*0.3,sy+T*0.45,T*0.4,T*0.3);
+    ctx.fillStyle='rgba(200,180,140,0.7)'; ctx.fillRect(sx+T*0.35,sy+T*0.2,T*0.3,T*0.25);
+  }else if(t==='hq'){
+    ctx.fillStyle='#c4a458'; ctx.fillRect(sx+T*0.47,sy+T*0.12,2,T*0.55);
+    ctx.fillStyle='#d94a4a'; ctx.beginPath();
+    ctx.moveTo(sx+T*0.49,sy+T*0.12);ctx.lineTo(sx+T*0.8,sy+T*0.22);ctx.lineTo(sx+T*0.49,sy+T*0.32);ctx.fill();
+  }
+}
+
+function render(){
+  const {width,height}=gs.map;
+  ctx.fillStyle='#1a1f1e';ctx.fillRect(0,0,canvas.width,canvas.height);
+  for(let y=0;y<height;y++)for(let x=0;x<width;x++){
+    const sx=x*T-vx,sy=y*T-vy;
+    if(sx<-T||sx>canvas.width||sy<-T||sy>canvas.height)continue;
+    const cell=gs.map.getCell(x,y),t=cell.terrain.type;
+    ctx.fillStyle=TCOL[t];ctx.fillRect(sx,sy,T,T);
+    ctx.strokeStyle='rgba(0,0,0,0.25)';ctx.lineWidth=1;ctx.strokeRect(sx,sy,T,T);
+    const k=`${x},${y}`;
+    if(fog.visible&&!fog.visible.has(k)){
+      ctx.fillStyle=fog.revealed&&fog.revealed[k]?'rgba(0,0,0,0.5)':'rgba(0,0,0,0.7)';
+      ctx.fillRect(sx,sy,T,T);continue
+    }
+    if(t==='city'||t==='hq')drawIcon(t,sx,sy);
+  }
+  for(const u of gs.units){if(u.hp<=0)continue;
+    const k=`${u.x},${u.y}`;if(fog.visible&&!fog.visible.has(k))continue;
+    const sx=u.x*T-vx+T/2,sy=u.y*T-vy+T/2;
+    ctx.beginPath();ctx.arc(sx,sy,T*0.36,0,Math.PI*2);ctx.fillStyle=PCOL[u.owner];ctx.fill();
+    ctx.strokeStyle=u===sel?'#c4a458':'#1a1f1e';ctx.lineWidth=u===sel?3:2;ctx.stroke();
+    if(u.hp<u.maxHp){
+      ctx.fillStyle='#1a1f1e';ctx.fillRect(sx-T*0.3,sy+T*0.3,T*0.6,4);
+      ctx.fillStyle=u.hp>4?'#4a7c3f':u.hp>2?'#c4a458':'#d94a4a';
+      ctx.fillRect(sx-T*0.3,sy+T*0.3,T*0.6*u.hp/u.maxHp,4)
+    }
+    ctx.fillStyle='#fff';ctx.font='bold 16px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(u.icon,sx,sy)
+  }
+  // Minimap
+  const ms=Math.min(140/width,140/height);mctx.fillStyle='#1a1f1e';mctx.fillRect(0,0,140,140);
+  for(let y=0;y<height;y++)for(let x=0;x<width;x++){
+    mctx.fillStyle=TCOL[gs.map.getCell(x,y).terrain.type];mctx.fillRect(x*ms,y*ms,ms,ms)
+  }
+  for(const u of gs.units){if(u.hp<=0)continue;mctx.fillStyle=PCOL[u.owner];mctx.fillRect(u.x*ms,u.y*ms,ms,ms)}
+  mctx.strokeStyle='#c4a458';mctx.lineWidth=1.5;
+  mctx.strokeRect(vx/T*ms,vy/T*ms,canvas.width/T*ms,canvas.height/T*ms);
+  // Move highlights
+  for(const m of moves){
+    const sx=m.x*T-vx,sy=m.y*T-vy;
+    ctx.fillStyle='rgba(74,144,217,0.3)';ctx.fillRect(sx+2,sy+2,T-4,T-4);
+    ctx.strokeStyle='rgba(74,144,217,0.6)';ctx.lineWidth=1;ctx.strokeRect(sx+2,sy+2,T-4,T-4);
+  }
+  // Attack targets
+  for(const t of targets){
+    const sx=t.x*T-vx,sy=t.y*T-vy;
+    ctx.fillStyle='rgba(217,74,74,0.3)';ctx.fillRect(sx+2,sy+2,T-4,T-4);
+    ctx.strokeStyle='rgba(217,74,74,0.6)';ctx.lineWidth=1;ctx.strokeRect(sx+2,sy+2,T-4,T-4);
+  }
+  // Build tiles
+  for(const b of buildTiles){
+    const sx=b.x*T-vx,sy=b.y*T-vy;
+    ctx.fillStyle='rgba(196,164,88,0.25)';ctx.fillRect(sx+2,sy+2,T-4,T-4);
+  }
+  // Floating damage
+  for(const f of floating){
+    ctx.fillStyle=f.color;ctx.font='bold 14px monospace';ctx.textAlign='center';
+    ctx.globalAlpha=Math.min(1,f.life/40);
+    ctx.fillText(f.text,f.x,f.y-(40-f.life)*0.6);
+    ctx.globalAlpha=1;
+  }
+  // Sidebar
+  document.getElementById('funds').innerHTML='$ '+gs.players[gs.currentPlayer].funds+' <span style="color:#4a7c3f;font-size:10px">+'+gs.incomePerTurn+'/turn</span>';
+  document.getElementById('phase').textContent=gs.currentPlayer===0?'YOUR TURN':(mpMode?'PLAYER 2':'AI THINKING...');
+  const info=document.getElementById('info');
+  if(sel&&sel.hp>0){
+    const hpPct=sel.hp/sel.maxHp;
+    const hpColor=hpPct>0.6?'#4a7c3f':hpPct>0.3?'#c4a458':'#d94a4a';
+    info.innerHTML=`<b>${sel.name}</b> <span>(${sel.owner===0?'You':(mpMode?'P2':'AI')})</span> ${sel.promoted?'★':''}<br>`
+      +`<span style="display:inline-block;width:100%;height:10px;background:#1a1f1e;border-radius:2px;margin:3px 0">`
+      +`<span style="display:inline-block;width:${hpPct*100}%;height:10px;background:${hpColor};border-radius:2px"></span></span>`
+      +`HP:${sel.hp}/${sel.maxHp} ATK:${sel.atk} DEF:${sel.def}<br>`
+      +`Kills:${sel.kills} Move:${sel.moveRange} Vis:${sel.visionRange}<br>`
+      +`${sel.hasMoved?'Moved':'Ready'} ${sel.hasAttacked?'| Attacked':''}`;
+  }
+  else info.textContent='Select a unit';
+  // Floating cleanup
+  floating=floating.filter(f=>f.life>0);
+  requestAnimationFrame(()=>{if(floating.length>0)render();});
+}
+
+// ── Game helpers ──
+function gridPos(e){
+  const r=canvas.getBoundingClientRect();
+  return {x:Math.floor((e.clientX-r.left+vx)/T),y:Math.floor((e.clientY-r.top+vy)/T)};
+}
+function clearHighlights(){moves=[];targets=[];buildTiles=[];floating=floating.filter(f=>{f.life--;return f.life>0});}
+function addFloating(x,y,text,color='#fff'){
+  floating.push({x:x*T-vx+T/2,y:y*T-vy,text,color,life:40});
+}
+function isMyUnit(u){return u&&u.hp>0&&u.owner===gs.currentPlayer;}
+function isEnemyUnit(u){return u&&u.hp>0&&u.owner!==gs.currentPlayer;}
+function doAI(){
+  if(gs.currentPlayer!==1||gs.gameOver||aiActive)return;
+  aiActive=true;
+  const delay=ms=>new Promise(r=>setTimeout(r,ms));
+  (async()=>{
+    gs.aiTurn();fog=gs.calculateFog();sel=null;clearHighlights();
+    render();
+    if(gs.gameOver)showGameOver();
+    else{aiActive=false;checkMP();render();}
+  })();
+}
+function checkMP(){
+  if(mpMode&&gs.currentPlayer===1&&!gs.gameOver){
+    document.getElementById('info').textContent='Pass to Player 2';
+    document.getElementById('phase').textContent='PLAYER 2 TURN';
+    document.getElementById('endTurn').textContent='Pass to P2';
+  }
+}
+function resetUnits(){
+  for(const u of gs.units){u.hasMoved=false;u.hasAttacked=false;}
+  gs.calculateFunds();
+}
+
+function showGameOver(){
+  document.getElementById('game-over').style.display='flex';
+  const w=gs.winner;
+  document.getElementById('go-title').textContent=w===0?(mpMode?'PLAYER 1 WINS!':'VICTORY!'):(mpMode?'PLAYER 2 WINS!':'DEFEAT');
+  document.getElementById('go-title').style.color=w===0?'#4a7c3f':'#d94a4a';
+  document.getElementById('go-sub').textContent=gs.players[w].name+' conquered the battlefield';
+}
+
+// ── Map click handler ──
+function onMapClick(mx,my){
+  if(gs.gameOver||aiActive)return;
+  if(gs.currentPlayer===1&&!mpMode)return; // AI turn, no clicks
+  const cell=gs.map.getCell(mx,my);
+  const clickUnit=cell?.unit;
+
+  // If clicking on a move target
+  if(moves.some(m=>m.x===mx&&m.y===my)&&sel){
+    const r=gs.moveUnit(sel,mx,my);
+    if(r.captured){addFloating(mx,my,'CAPTURED','#c4a458');}
+    clearHighlights();
+    targets=gs.getAttackTargets(sel);
+    if(sel.hp<=0){sel=null;clearHighlights();}
+    fog=gs.calculateFog();render();
+    if(gs.gameOver){showGameOver();return;}
+    return;
+  }
+  // If clicking on an attack target
+  if(targets.some(t=>t.x===mx&&t.y===my)&&sel){
+    const tgt=targets.find(t=>t.x===mx&&t.y===my);
+    const res=gs.resolveCombat(sel,tgt);
+    addFloating(tgt.x,tgt.y,'-'+res.damage,'#d94a4a');
+    if(res.counterDamage>0)addFloating(sel.x,sel.y,'-'+res.counterDamage,'#d94a4a');
+    gs.removeDestroyed();
+    clearHighlights();
+    if(sel.hp<=0){sel=null;}
+    fog=gs.calculateFog();render();
+    if(gs.gameOver){showGameOver();return;}
+    return;
+  }
+  // Select unit
+  if(isMyUnit(clickUnit)){
+    sel=clickUnit;
+    if(!sel.hasMoved)moves=gs.getMoveRange(sel);
+    if(!sel.hasAttacked)targets=gs.getAttackTargets(sel);
+    buildTiles=[];
+    // Show build tiles if on HQ/city
+    if(cell.terrain.canBuild&&!sel.hasMoved&&!sel.hasAttacked){
+      buildTiles=[{x:mx,y:my}];
+      const adjs=[[0,1],[0,-1],[1,0],[-1,0]];
+      for(const [dx,dy] of adjs){
+        const nx=mx+dx,ny=my+dy;
+        const nc=gs.map.getCell(nx,ny);
+        if(nc&&!nc.unit&&gs.map.isInBounds(nx,ny))buildTiles.push({x:nx,y:ny});
+      }
+    }
+    fog=gs.calculateFog();render();
+    return;
+  }
+  // Clicked empty or enemy — deselect
+  sel=null;clearHighlights();render();
+}
+
+// ── Input handling (mouse + touch) ──
+canvas.addEventListener('pointerdown',e=>{
+  drag=true;dx=e.clientX;dy=e.clientY;dvx=vx;dvy=vy;
+  canvas.setPointerCapture(e.pointerId);
+});
+window.addEventListener('pointermove',e=>{
+  if(!drag)return;vx=dvx-(e.clientX-dx);vy=dvy-(e.clientY-dy);clamp();render();
+});
+window.addEventListener('pointerup',e=>{
+  const moved=Math.abs(e.clientX-dx)>4||Math.abs(e.clientY-dy)>4;drag=false;
+  canvas.releasePointerCapture(e.pointerId);
+  if(moved)return;
+  const p=gridPos(e);onMapClick(p.x,p.y);
+});
+// Touch pinch-zoom
+let pinchDist=0,pinchScale=0;
+canvas.addEventListener('touchstart',e=>{
+  if(e.touches.length===2){
+    pinchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+    pinchScale=vx;
+  }
+},{passive:true});
+canvas.addEventListener('touchmove',e=>{
+  if(e.touches.length===2){
+    const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+    if(pinchDist>0){
+      const scale=pinchDist/d;vx=pinchScale*scale;clamp();render();
+    }
+  }
+},{passive:true});
+canvas.addEventListener('touchend',()=>{pinchDist=0;});
+
+document.getElementById('endTurn').addEventListener('click',()=>{
+  if(gs.gameOver||aiActive)return;
+  sel=null;clearHighlights();buildTiles=[];
+  gs.endTurn();fog=gs.calculateFog();
+  if(gs.gameOver){showGameOver();render();return;}
+  document.getElementById('endTurn').textContent=mpMode?'Pass to P2':'End Turn';
+  document.getElementById('phase').textContent=gs.currentPlayer===0?'YOUR TURN':'AI THINKING...';
+  render();
+  if(gs.currentPlayer===1&&mpMode)checkMP();
+  else if(gs.currentPlayer===1)doAI();
+});
+
+// ── Purchase panel ──
+document.getElementById('endTurn').insertAdjacentHTML('afterend',
+  '<button id="btn-buy" style="margin-top:4px">Buy Units</button>');
+document.getElementById('btn-buy').addEventListener('click',()=>{
+  if(gs.gameOver||aiActive||gs.currentPlayer===1)return;
+  buyOpen=!buyOpen;
+  const panel=document.getElementById('buy-panel');
+  if(buyOpen&&sel&&buildTiles.length>0){
+    let html='';
+    for(const [type,def] of Object.entries(UnitTypes.ALL)){
+      if(def.cost===0)continue;
+      html+=`<button onclick="buy('${type}')">${def.icon} ${def.name}<br>$${def.cost}</button>`;
+    }
+    panel.innerHTML=html;panel.style.display='flex';
+  }else{panel.style.display='none';buyOpen=false;}
+});
+function buy(type){
+  if(!buildTiles.length)return;
+  const t=buildTiles[0]; // Buy at HQ/city position
+  const u=gs.buyUnit(type,t.x,t.y);
+  if(u){
+    addFloating(t.x,t.y,'BOUGHT','#4a7c3f');
+    fog=gs.calculateFog();render();
+    document.getElementById('buy-panel').style.display='none';buyOpen=false;
+  }
+}
+
+// ── Save / Load ──
+function saveGame(){
+  const data={save:gs.save(),mpMode,mpPlayer,campaignMission,fogOfWar:gs.fogOfWar,revealed:gs.revealedTiles};
+  localStorage.setItem('frontwars_save',JSON.stringify(data));
+}
+function loadGame(){
+  const raw=localStorage.getItem('frontwars_save');
+  if(!raw)return false;
+  const data=JSON.parse(raw);
+  gs=GameState.load(data.save);
+  mpMode=data.mpMode||false;mpPlayer=data.mpPlayer||0;
+  campaignMission=data.campaignMission||null;
+  gs.fogOfWar=data.fogOfWar||false;
+  gs.revealedTiles=data.revealed||{};
+  fog=gs.calculateFog();sel=null;clearHighlights();
+  _saveHooked=false; hookGame();
+  document.getElementById('menu-overlay').style.display='none';
+  resize();clamp();render();
+  return true;
+}
+// Auto-save hook (applied in hookGame after gs exists)
+let _saveHooked=false;
+function hookGame(){
+  if(_saveHooked)return;_saveHooked=true;
+  const origEndTurn=gs.endTurn.bind(gs);
+  gs.endTurn=function(){origEndTurn();saveGame();};
+  const origDeclare=gs._declareVictor.bind(gs);
+  gs._declareVictor=function(p){origDeclare(p);setTimeout(()=>{if(gs.gameOver)showGameOver();},500);};
+  const origAI=gs.aiTurn.bind(gs);
+  gs.aiTurn=function(){origAI();if(gs.gameOver&&gs.winner===0&&campaignMission!==null){campaignMission++;localStorage.setItem('frontwars_campaign',campaignMission);}};
+}
+
+// ── Campaign ──
+function startCampaign(){
+  campaignMission=0;
+  document.getElementById('menu-overlay').style.display='none';
+  loadMission(campaignMission);
+}
+function loadMission(idx){
+  if(idx>=Campaign.missions.length){
+    alert('Campaign complete! All missions won.');
+    showMenu();return;
+  }
+  const m=Campaign.missions[idx];
+  document.getElementById('mi-title').textContent=`Mission ${m.id}: ${m.name}`;
+  document.getElementById('mi-text').textContent=m.intro;
+  document.getElementById('mission-intro').style.display='flex';
+}
+document.getElementById('btn-mission-start').addEventListener('click',()=>{
+  document.getElementById('mission-intro').style.display='none';
+  const m=Campaign.missions[campaignMission];
+  const map=m.map();
+  gs=new GameState(map,['Commander','AI']);
+  gs.setFogOfWar(m.fog);
+  mpMode=false;
+  for(const u of m.playerUnits){gs.addUnit(new Unit(0,u.type,u.x,u.y));}
+  for(const u of m.enemyUnits){gs.addUnit(new Unit(1,u.type,u.x,u.y));}
+  fog=gs.calculateFog();
+  sel=null;clearHighlights();
+  hookGame(); resize();clamp();render();
+});
+
+// ── Multiplayer ──
+function startMP(){
+  const map=MapGrid.map1();
+  gs=new GameState(map,['Player 1','Player 2']);
+  gs.setFogOfWar(false);
+  mpMode=true;mpPlayer=0;
+  gs.addUnit(new Unit(0,'infantry',1,0));gs.addUnit(new Unit(0,'tank',0,1));
+  gs.addUnit(new Unit(1,'infantry',7,9));gs.addUnit(new Unit(1,'tank',9,8));
+  fog=gs.calculateFog();sel=null;clearHighlights();
+  hookGame();
+  document.getElementById('menu-overlay').style.display='none';
+  resize();clamp();render();
+}
+
+// ── Menu ──
+function showMenu(){
+  document.getElementById('game-over').style.display='none';
+  document.getElementById('menu-overlay').style.display='flex';
+  document.getElementById('btn-continue').style.display=
+    localStorage.getItem('frontwars_save')?'block':'none';
+  gs=null;sel=null;
+}
+document.getElementById('btn-new-game').addEventListener('click',()=>{
+  mpMode=false;campaignMission=null;
+  document.getElementById('menu-overlay').style.display='none';
+  init();
+});
+document.getElementById('btn-campaign').addEventListener('click',startCampaign);
+document.getElementById('btn-multiplayer').addEventListener('click',startMP);
+document.getElementById('btn-continue').addEventListener('click',()=>{loadGame();});
+document.getElementById('btn-restart').addEventListener('click',()=>{
+  document.getElementById('game-over').style.display='none';
+  if(campaignMission!==null)loadMission(campaignMission);
+  else init();
+});
+document.getElementById('btn-menu').addEventListener('click',showMenu);
+
+// ── Init ──
+window.addEventListener('resize',()=>{resize();clamp();render()});
+showMenu();
+</script>
+</body>
+</html>
