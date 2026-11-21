@@ -1,75 +1,62 @@
-// Front Wars Game Engine — Pure game logic, no rendering
-// Based on DESIGN.md research document
+// Front Wars game engine — pure game logic, no rendering.
+// Works in the browser (globals) and in Node (module.exports) so it can be unit-tested.
 
-class Terrain {
-  static TYPES = {
-    plains:   { defense: 0, moves: { F: 1, T: 1, W: 2 }, color: '#4a7c3f', name: 'Plains' },
-    forest:   { defense: 3, moves: { F: 1, T: 2, W: 3 }, color: '#2d5a1e', name: 'Forest' },
-    mountain: { defense: 4, moves: { F: 2, T: 99, W: 99 }, color: '#6b6b6b', name: 'Mountain' },
-    road:     { defense: 0, moves: { F: 1, T: 1, W: 1 }, color: '#c4a458', name: 'Road' },
-    sea:      { defense: 0, moves: { F: 99, T: 99, W: 99 }, color: '#1a4d7e', name: 'Sea' },
-    city:     { defense: 3, moves: { F: 1, T: 1, W: 1 }, color: '#8b7355', name: 'City', income: 1000, canBuild: true },
-    hq:       { defense: 4, moves: { F: 1, T: 1, W: 1 }, color: '#8b0000', name: 'HQ', income: 2000, canBuild: true },
-  };
+const TERRAIN = {
+  plains:   { name: 'Plains',   defense: 1, moves: { F: 1, T: 1, W: 2 } },
+  forest:   { name: 'Forest',   defense: 2, moves: { F: 1, T: 2, W: 3 } },
+  mountain: { name: 'Mountain', defense: 4, moves: { F: 2 } },
+  road:     { name: 'Road',     defense: 0, moves: { F: 1, T: 1, W: 1 } },
+  sea:      { name: 'Sea',      defense: 0, moves: {} },
+  city:     { name: 'City',     defense: 3, moves: { F: 1, T: 1, W: 1 }, property: true, income: 1000 },
+  hq:       { name: 'HQ',       defense: 4, moves: { F: 1, T: 1, W: 1 }, property: true, income: 2000 },
+};
 
-  constructor(type) {
-    this.type = type;
-    const def = Terrain.TYPES[type];
-    this.defense = def.defense;
-    this.moves = def.moves;
-    this.color = def.color;
-    this.name = def.name;
-    this.income = def.income || 0;
-    this.canBuild = def.canBuild || false;
-  }
+// moveType: F = foot, T = tread, W = wheels. minRange > 1 marks indirect (ranged) units.
+const UNIT_TYPES = {
+  infantry:  { name: 'Infantry',  cost: 1000, move: 3, vision: 2, atk: 3, def: 1, minRange: 1, maxRange: 1, moveType: 'F', captures: true, icon: '▲' },
+  mech:      { name: 'Mech',      cost: 3000, move: 2, vision: 2, atk: 5, def: 2, minRange: 1, maxRange: 1, moveType: 'F', captures: true, icon: '◆' },
+  recon:     { name: 'Recon',     cost: 4000, move: 8, vision: 5, atk: 4, def: 1, minRange: 1, maxRange: 1, moveType: 'W', icon: '●' },
+  tank:      { name: 'Tank',      cost: 7000, move: 6, vision: 3, atk: 6, def: 3, minRange: 1, maxRange: 1, moveType: 'T', icon: '■' },
+  artillery: { name: 'Artillery', cost: 6000, move: 5, vision: 1, atk: 6, def: 1, minRange: 2, maxRange: 3, moveType: 'W', icon: '⬟' },
+  anti_air:  { name: 'Anti-Air',  cost: 8000, move: 6, vision: 2, atk: 5, def: 3, minRange: 1, maxRange: 1, moveType: 'T', icon: '✖' },
+};
 
-  moveCost(moveType) {
-    return this.moves[moveType] ?? 99;
-  }
-}
+const CAPTURE_POINTS = 20;   // a full-HP infantry needs two turns to capture
+const STARTING_FUNDS = 5000;
+const PROMOTION_KILLS = 3;
 
-class UnitTypes {
-  static ALL = {
-    infantry:  { cost: 1000, move: 3, vision: 2, atk: 1, def: 1, range: 1, moveType: 'F', name: 'Infantry', captures: true, icon: '▲' },
-    mech:      { cost: 3000, move: 2, vision: 2, atk: 5, def: 2, range: 1, moveType: 'F', name: 'Mech', captures: true, icon: '◆' },
-    recon:     { cost: 4000, move: 8, vision: 5, atk: 3, def: 1, range: 1, moveType: 'W', name: 'Recon', icon: '●' },
-    tank:      { cost: 7000, move: 6, vision: 3, atk: 6, def: 3, range: 1, moveType: 'T', name: 'Tank', icon: '■' },
-    artillery: { cost: 6000, move: 5, vision: 1, atk: 6, def: 2, range: 3, moveType: 'W', name: 'Artillery', indirect: true, icon: '⬟' },
-    anti_air:  { cost: 8000, move: 6, vision: 2, atk: 5, def: 3, range: 1, moveType: 'T', name: 'Anti-Air', icon: '✖' },
-    apc:       { cost: 5000, move: 6, vision: 1, atk: 0, def: 1, range: 0, moveType: 'W', name: 'APC', icon: '◇' },
-  };
-
-  static get(typeName) { return this.ALL[typeName]; }
-}
+const key = (x, y) => `${x},${y}`;
+const dist = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+const DIRS = [[0, 1], [1, 0], [0, -1], [-1, 0]];
 
 class Unit {
   static _idCounter = 0;
+
   constructor(owner, type, x, y) {
+    const def = UNIT_TYPES[type];
+    if (!def) throw new Error(`Unknown unit type: ${type}`);
     this.id = ++Unit._idCounter;
-    this.owner = owner; // 0 = Player 1, 1 = Player 2 / AI
+    this.owner = owner; // 0 = player 1, 1 = player 2 / AI
     this.type = type;
-    const def = UnitTypes.get(type);
-    this.maxHp = 10;
-    this.hp = 10;
-    this.atk = def.atk;
-    this.def = def.def;
-    this.moveRange = def.move;
-    this.visionRange = def.vision;
-    this.atkRange = def.range;
-    this.cost = def.cost;
-    this.moveType = def.moveType;
-    this.name = def.name;
-    this.icon = def.icon;
-    this.captures = def.captures || false;
-    this.indirect = def.indirect || false;
     this.x = x;
     this.y = y;
+    this.hp = 10;
+    this.maxHp = 10;
     this.hasMoved = false;
     this.hasAttacked = false;
     this.kills = 0;
     this.promoted = false;
-    if (def.canTransport) this.canTransport = true;
   }
+
+  get def() { return UNIT_TYPES[this.type]; }
+  get name() { return this.def.name; }
+  get icon() { return this.def.icon; }
+  get atk() { return this.def.atk + (this.promoted ? 1 : 0); }
+  get armor() { return this.def.def; }
+  get moveRange() { return this.def.move; }
+  get visionRange() { return this.def.vision; }
+  get indirect() { return this.def.minRange > 1; }
+  get captures() { return !!this.def.captures; }
 }
 
 class MapGrid {
@@ -78,548 +65,543 @@ class MapGrid {
     this.height = height;
     this.cells = [];
     for (let y = 0; y < height; y++) {
-      this.cells[y] = [];
-      for (let x = 0; x < width; x++) {
-        this.cells[y][x] = { terrain: new Terrain('plains'), unit: null };
-      }
+      this.cells.push([]);
+      for (let x = 0; x < width; x++) this.cells[y].push({ terrain: 'plains', owner: null, unit: null });
     }
   }
 
-  setTerrain(x, y, type) {
-    if (x >= 0 && x < this.width && y >= 0 && y < this.height) {
-      this.cells[y][x].terrain = new Terrain(type);
-    }
+  /** Build a map from ASCII rows. Legend: . plains, f forest, m mountain, r road, s sea,
+   *  c neutral city, 1/2 city owned by player 1/2, A/B HQ of player 1/2. */
+  static fromRows(rows) {
+    const legend = {
+      '.': ['plains', null], f: ['forest', null], m: ['mountain', null], r: ['road', null],
+      s: ['sea', null], c: ['city', null], 1: ['city', 0], 2: ['city', 1], A: ['hq', 0], B: ['hq', 1],
+    };
+    const map = new MapGrid(rows[0].length, rows.length);
+    rows.forEach((row, y) => [...row].forEach((ch, x) => {
+      const [terrain, owner] = legend[ch];
+      map.cells[y][x].terrain = terrain;
+      map.cells[y][x].owner = owner;
+    }));
+    return map;
   }
 
-  placeUnit(unit) {
-    const cell = this.cells[unit.y]?.[unit.x];
-    if (cell && !cell.unit) {
-      cell.unit = unit;
-      return true;
-    }
-    return false;
-  }
-
-  removeUnit(x, y) {
-    const cell = this.cells[y]?.[x];
-    if (cell) {
-      cell.unit = null;
-    }
-  }
-
-  getCell(x, y) {
-    return this.cells[y]?.[x] || null;
-  }
-
-  isInBounds(x, y) {
-    return x >= 0 && x < this.width && y >= 0 && y < this.height;
-  }
+  inBounds(x, y) { return x >= 0 && x < this.width && y >= 0 && y < this.height; }
+  cell(x, y) { return this.inBounds(x, y) ? this.cells[y][x] : null; }
+  terrain(x, y) { return TERRAIN[this.cells[y][x].terrain]; }
+  moveCost(x, y, moveType) { return this.terrain(x, y).moves[moveType] ?? Infinity; }
 }
 
-// Pre-built maps
-MapGrid.map1 = function() {
-  const m = new MapGrid(10, 10);
-  const setup = [
-    'pppppppppp',
-    'ppccppccpp',
-    'pppppppppp',
-    'pppppppppp',
-    'pppppppppp',
-    'pppppppppp',
-    'pppppppppp',
-    'ppccppccpp',
-    'pppppppppp',
-    'pppppppppp',
-  ];
-  for (let y = 0; y < 10; y++) {
-    for (let x = 0; x < 10; x++) {
-      const ch = setup[y][x];
-      if (ch === 'c') m.setTerrain(x, y, 'city');
-    }
-  }
-  m.setTerrain(0, 0, 'hq');
-  m.setTerrain(9, 9, 'hq');
-  return m;
+const MAPS = {
+  skirmish: () => MapGrid.fromRows([
+    'A..f......',
+    '..c...c...',
+    '.ff..r....',
+    '.....r..m.',
+    '..m..rrrr.',
+    '.rrrr..m..',
+    '.m..r.....',
+    '....r..ff.',
+    '...c...c..',
+    '......f..B',
+  ]),
+  mountainPass: () => MapGrid.fromRows([
+    '...f...m...f...',
+    'A.c....m....c..',
+    '.......m.......',
+    '..f..c.m.c..f..',
+    '.......m.......',
+    '.rrrrrrrrrrrrr.',
+    '.r..c..m..c..r.',
+    '.r.fff.m.fff.r.',
+    '.r..c..m..c..r.',
+    '.rrrrrrrrrrrrr.',
+    '.......m.......',
+    '..f..c.m.c..f..',
+    '.......m.......',
+    '..c....m....c.B',
+    '...f...m...f...',
+  ]),
+  river: () => MapGrid.fromRows([
+    '..........f.........',
+    '.A..f.........m.....',
+    '...c.......c........',
+    '...ss...f.......f...',
+    '....ss..............',
+    '..f..ss....c....m...',
+    '......ss............',
+    '...c...sr..f....c...',
+    '........sr..........',
+    '..m......rs....f....',
+    '.....f...rs.........',
+    '...........ss..c....',
+    '..c.....f...ss......',
+    '.............ss..f..',
+    '....m...c.....ss....',
+    '...............ss...',
+    '..f.....f.......ss..',
+    '...c.........c...s..',
+    '.........m........B.',
+    '.......f............',
+  ]),
 };
 
-MapGrid.map2 = function() {
-  const m = new MapGrid(15, 15);
-  for (let y = 0; y < 15; y++) {
-    for (let x = 0; x < 15; x++) {
-      if ((x + y) % 5 === 0 && x > 0 && x < 14 && y > 0 && y < 14) m.setTerrain(x, y, 'city');
-      if (x === 7 && y >= 2 && y <= 12) m.setTerrain(x, y, 'mountain');
-      if (y === 7 && x >= 2 && x <= 12 && x !== 7) m.setTerrain(x, y, 'forest');
-    }
-  }
-  m.setTerrain(0, 1, 'hq');
-  m.setTerrain(14, 13, 'hq');
-  return m;
-};
-
-MapGrid.map3 = function() {
-  const m = new MapGrid(20, 20);
-  // Rivers, forests, and scattered cities
-  for (let y = 0; y < 20; y++) {
-    for (let x = 0; x < 20; x++) {
-      if ((x + y) % 7 === 0) m.setTerrain(x, y, 'forest');
-      if (Math.abs(x - y) < 2 && x > 3 && x < 16) m.setTerrain(x, y, 'sea');
-    }
-  }
-  // Cities in clusters
-  const cities = [[3,3],[3,16],[7,8],[7,10],[12,8],[12,12],[16,3],[16,16]];
-  cities.forEach(([cx, cy]) => m.setTerrain(cx, cy, 'city'));
-  m.setTerrain(1, 1, 'hq');
-  m.setTerrain(18, 18, 'hq');
-  return m;
-};
+const CAMPAIGN = [
+  {
+    name: 'Boot Camp', map: 'skirmish', fog: false,
+    intro: 'Welcome, Commander. Two enemy squads hold the eastern plains. Move your infantry onto cities to capture them for income, and take the enemy HQ to win.',
+    player: [['infantry', 1, 0], ['infantry', 0, 1]],
+    enemy: [['infantry', 8, 9], ['infantry', 9, 8]],
+  },
+  {
+    name: 'Armored Advance', map: 'mountainPass', fog: false,
+    intro: 'The enemy is reinforcing with armor. A mountain ridge splits the valley — use the roads to push through and bring your tanks into range.',
+    player: [['tank', 1, 0], ['infantry', 0, 2], ['recon', 2, 1]],
+    enemy: [['tank', 13, 14], ['infantry', 14, 12], ['mech', 12, 13]],
+  },
+  {
+    name: 'Fog of War', map: 'river', fog: true,
+    intro: 'A large force is advancing under cover of darkness. Visibility is limited, so scout ahead with your recon before committing your tanks.',
+    player: [['recon', 2, 0], ['tank', 1, 2], ['artillery', 0, 1], ['infantry', 2, 1]],
+    enemy: [['tank', 17, 19], ['artillery', 18, 17], ['infantry', 19, 18], ['anti_air', 16, 18]],
+  },
+  {
+    name: 'River Crossing', map: 'river', fog: false,
+    intro: 'The enemy has dug in behind the river. Use the bridges, bombard their lines with artillery and send infantry to seize the cities on the far bank.',
+    player: [['tank', 3, 1], ['artillery', 1, 3], ['infantry', 2, 0], ['anti_air', 0, 2], ['mech', 3, 2]],
+    enemy: [['tank', 17, 18], ['tank', 16, 19], ['artillery', 18, 16], ['infantry', 19, 17], ['mech', 16, 17]],
+  },
+  {
+    name: 'Final Stand', map: 'river', fog: true,
+    intro: 'This is it, Commander. The enemy has thrown everything at us. Take their HQ and end this war once and for all.',
+    player: [['tank', 1, 1], ['artillery', 0, 3], ['infantry', 2, 0], ['recon', 3, 1], ['anti_air', 1, 2]],
+    enemy: [['tank', 18, 17], ['artillery', 19, 16], ['infantry', 17, 19], ['mech', 18, 16], ['anti_air', 16, 19], ['recon', 19, 18]],
+  },
+];
 
 class GameState {
-  constructor(map, playerNames = ['Player', 'AI']) {
+  constructor(map, { names = ['Player', 'AI'], fog = false } = {}) {
     this.map = map;
     this.units = [];
-    this.players = [{
-      name: playerNames[0], funds: 5000, color: '#4a90d9', alive: true,
-    }, {
-      name: playerNames[1], funds: 5000, color: '#d94a4a', alive: true,
-    }];
+    this.players = names.map(name => ({ name, funds: STARTING_FUNDS }));
     this.currentPlayer = 0;
-    this.turn = 0;
-    this.phase = 'idle'; // idle, move, attack
-    this.selectedUnit = null;
-    this.fogOfWar = false;
-    this.revealedTiles = {}; // `${x},${y}` → true (persistent)
-    this.captureProgress = {}; // `${x},${y}` → { owner, progress }
+    this.day = 1;
+    this.fogOfWar = fog;
+    this.captureProgress = {}; // tile key → { unitId, points }
     this.gameOver = false;
     this.winner = null;
-    this.campaignMode = null; // { mission: N, playerKills: Map<unitId, count> }
   }
+
+  // ── Units ──────────────────────────────────────────────────────────────
 
   addUnit(unit) {
-    if (this.map.placeUnit(unit)) {
-      this.units.push(unit);
-      return true;
-    }
-    return false;
-  }
-
-  getPlayerUnits(playerIndex) {
-    return this.units.filter(u => u.owner === playerIndex && u.hp > 0);
-  }
-
-  removeDestroyed() {
-    this.units = this.units.filter(u => {
-      if (u.hp <= 0) {
-        this.map.removeUnit(u.x, u.y);
-        return false;
-      }
-      return true;
-    });
-  }
-
-  getMoveRange(unit) {
-    if (!unit || unit.hasMoved) return [];
-    const visited = new Map();
-    const queue = [{ x: unit.x, y: unit.y, mp: unit.moveRange }];
-    const key = (x, y) => `${x},${y}`;
-    visited.set(key(unit.x, unit.y), true);
-
-    const valid = [];
-    const dirs = [[0, 1], [1, 0], [0, -1], [-1, 0]];
-
-    while (queue.length > 0) {
-      const { x, y, mp } = queue.shift();
-      for (const [dx, dy] of dirs) {
-        const nx = x + dx, ny = y + dy;
-        const nk = key(nx, ny);
-        if (!this.map.isInBounds(nx, ny) || visited.has(nk)) continue;
-        const cell = this.map.getCell(nx, ny);
-        if (!cell) continue;
-        const cost = cell.terrain.moveCost(unit.moveType);
-        if (cost >= 99) continue;
-        const newMp = mp - cost;
-        if (newMp < 0) continue;
-        if (cell.unit && cell.unit.owner !== unit.owner) continue; // blocked by enemy
-        visited.set(nk, true);
-        if (newMp >= 0) {
-          valid.push({ x: nx, y: ny });
-          if (newMp > 0) queue.push({ x: nx, y: ny, mp: newMp });
-        }
-      }
-    }
-    return valid.filter(m => !(m.x === unit.x && m.y === unit.y));
-  }
-
-  getAttackTargets(unit) {
-    if (!unit || unit.hasAttacked || unit.atkRange === 0) return [];
-    const targets = [];
-    for (const other of this.units) {
-      if (other.owner === unit.owner || other.hp <= 0) continue;
-      const dist = Math.abs(unit.x - other.x) + Math.abs(unit.y - other.y);
-      if (dist > unit.atkRange) continue;
-      if (dist === 1) { targets.push(other); continue; }
-      // Indirect: line of sight not required for artillery type
-      if (unit.indirect) { targets.push(other); continue; }
-      // Direct ranged: simple line-of-sight check (no mountains blocking)
-      if (this._hasLineOfSight(unit.x, unit.y, other.x, other.y)) {
-        targets.push(other);
-      }
-    }
-    return targets;
-  }
-
-  _hasLineOfSight(x1, y1, x2, y2) {
-    const dx = Math.abs(x2 - x1), dy = Math.abs(y2 - y1);
-    const sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1;
-    let err = dx - dy, x = x1, y = y1;
-    while (x !== x2 || y !== y2) {
-      const e2 = 2 * err;
-      if (e2 > -dy) { err -= dy; x += sx; }
-      if (e2 < dx) { err += dx; y += sy; }
-      if (x === x2 && y === y2) break;
-      const cell = this.map.getCell(x, y);
-      if (cell && cell.terrain.type === 'mountain') return false;
-    }
+    const cell = this.map.cell(unit.x, unit.y);
+    if (!cell || cell.unit || !Number.isFinite(this.map.moveCost(unit.x, unit.y, unit.def.moveType))) return false;
+    cell.unit = unit;
+    this.units.push(unit);
     return true;
   }
 
-  resolveCombat(attacker, defender) {
-    const baseDamage = Math.floor(attacker.atk * 0.5 + Math.random() * attacker.atk * 0.5);
-    const hpRatio = attacker.hp / attacker.maxHp;
-    const defHpMod = defender.hp / defender.maxHp;
-    const terrainMod = 1 - (this.map.getCell(defender.x, defender.y)?.terrain.defense * 0.1);
-    let damage = Math.max(1, Math.floor(baseDamage * hpRatio * defHpMod * terrainMod));
-    defender.hp = Math.max(0, defender.hp - damage);
+  spawn(owner, type, x, y) {
+    const unit = new Unit(owner, type, x, y);
+    return this.addUnit(unit) ? unit : null;
+  }
 
-    let counterDamage = 0;
-    if (defender.hp > 0 && defender.atkRange > 0) {
-      const dist = Math.abs(attacker.x - defender.x) + Math.abs(attacker.y - defender.y);
-      if (dist <= defender.atkRange && !(dist > 1 && !defender.indirect)) {
-        const counterHp = defender.hp / defender.maxHp;
-        counterDamage = Math.max(1, Math.floor(defender.atk * 0.3 * counterHp));
-        attacker.hp = Math.max(0, attacker.hp - counterDamage);
+  unitsOf(player) { return this.units.filter(u => u.owner === player); }
+  unitAt(x, y) { return this.map.cell(x, y)?.unit || null; }
+
+  _removeUnit(unit) {
+    this.map.cells[unit.y][unit.x].unit = null;
+    this.units = this.units.filter(u => u !== unit);
+    this._clearCapture(unit);
+  }
+
+  _clearCapture(unit) {
+    const k = key(unit.x, unit.y);
+    if (this.captureProgress[k]?.unitId === unit.id) delete this.captureProgress[k];
+  }
+
+  // ── Movement ───────────────────────────────────────────────────────────
+
+  /** Cheapest movement cost from (x, y) to every reachable tile (Dijkstra). */
+  _costField(unit, maxCost, passThroughEnemies = false) {
+    const best = new Map([[key(unit.x, unit.y), 0]]);
+    const queue = [{ x: unit.x, y: unit.y, cost: 0 }];
+    while (queue.length) {
+      queue.sort((a, b) => a.cost - b.cost);
+      const { x, y, cost } = queue.shift();
+      if (cost > best.get(key(x, y))) continue;
+      for (const [dx, dy] of DIRS) {
+        const nx = x + dx, ny = y + dy;
+        if (!this.map.inBounds(nx, ny)) continue;
+        const other = this.map.cells[ny][nx].unit;
+        if (!passThroughEnemies && other && other.owner !== unit.owner) continue;
+        const next = cost + this.map.moveCost(nx, ny, unit.def.moveType);
+        if (next > maxCost) continue;
+        const k = key(nx, ny);
+        if (!best.has(k) || next < best.get(k)) {
+          best.set(k, next);
+          queue.push({ x: nx, y: ny, cost: next });
+        }
       }
     }
+    return best;
+  }
 
-    if (defender.hp <= 0) {
-      this.map.removeUnit(defender.x, defender.y);
-      attacker.kills++;
-      if (attacker.kills >= 3 && !attacker.promoted) {
-        attacker.promoted = true;
-        attacker.atk += 1;
-      }
+  /** Tiles the unit can end its move on (friendly units can be passed but not stood on). */
+  getMoveRange(unit) {
+    if (unit.hasMoved || unit.owner !== this.currentPlayer) return [];
+    const tiles = [];
+    for (const k of this._costField(unit, unit.moveRange).keys()) {
+      const [x, y] = k.split(',').map(Number);
+      if (!this.map.cells[y][x].unit) tiles.push({ x, y });
     }
-
-    attacker.hasAttacked = true;
-    return { damage, counterDamage, destroyed: defender.hp <= 0 };
+    return tiles;
   }
 
   moveUnit(unit, x, y) {
-    this.map.removeUnit(unit.x, unit.y);
+    if (!this.getMoveRange(unit).some(t => t.x === x && t.y === y)) return false;
+    this._clearCapture(unit);
+    this.map.cells[unit.y][unit.x].unit = null;
     unit.x = x;
     unit.y = y;
+    this.map.cells[y][x].unit = unit;
     unit.hasMoved = true;
-    const cell = this.map.getCell(x, y);
-    if (cell) cell.unit = unit;
-
-    // Check capture
-    if (unit.captures) {
-      const t = cell?.terrain;
-      if ((t.type === 'city' || t.type === 'hq') && cell.unit === unit) {
-        const capKey = `${x},${y}`;
-        if (!this.captureProgress[capKey]) this.captureProgress[capKey] = 0;
-        this.captureProgress[capKey] += unit.hp;
-        if (this.captureProgress[capKey] >= 10) {
-          delete this.captureProgress[capKey];
-          if (t.type === 'hq') {
-            this._declareVictor(unit.owner);
-          }
-          return { captured: true };
-        }
-      }
-    }
-    return { captured: false };
+    return true;
   }
 
-  _declareVictor(playerIndex) {
-    this.gameOver = true;
-    this.winner = playerIndex;
-    this.players[playerIndex ^ 1].alive = false;
+  /** End a unit's action without moving (e.g. to keep capturing). */
+  wait(unit) {
+    unit.hasMoved = true;
   }
 
-  endTurn() {
-    // Check for destruction victory
-    const p1Units = this.getPlayerUnits(this.currentPlayer ^ 1);
-    if (p1Units.length === 0) {
-      this._declareVictor(this.currentPlayer);
-      return;
-    }
-    if (this.currentPlayer === 0 && this.getPlayerUnits(1).length === 0) {
-      this._declareVictor(0);
-      return;
-    }
+  // ── Combat ─────────────────────────────────────────────────────────────
 
-    this.currentPlayer = 1;
-    this.turn++;
-    this.resetAllUnits();
-
-    if (this.currentPlayer === 1 && !this.gameOver) {
-      this.aiTurn();
-    }
+  getAttackTargets(unit, from = unit) {
+    if (unit.hasAttacked || unit.owner !== this.currentPlayer) return [];
+    if (unit.indirect && unit.hasMoved) return []; // ranged units can't move and fire
+    return this.units.filter(o => {
+      if (o.owner === unit.owner) return false;
+      const d = dist(from, o);
+      return d >= unit.def.minRange && d <= unit.def.maxRange;
+    });
   }
 
-  resetAllUnits() {
-    for (const u of this.units) {
-      u.hasMoved = false;
-      u.hasAttacked = false;
-    }
-    this.calculateFunds();
+  /** Expected damage in HP points (before the random ±15%). */
+  estimateDamage(attacker, defender, attackerHp = attacker.hp) {
+    const terrain = this.map.terrain(defender.x, defender.y);
+    return attacker.atk * (attackerHp / 10) * (1 - terrain.defense * 0.1) * (1 - defender.armor * 0.1);
   }
 
-  calculateFunds() {
-    const income = this.getPlayerUnits(this.currentPlayer).reduce((sum) => sum, 0);
-    // Count owned cities
-    let totalIncome = 0;
+  _rollDamage(attacker, defender, attackerHp, rng) {
+    const raw = this.estimateDamage(attacker, defender, attackerHp) * (0.85 + rng() * 0.3);
+    return Math.max(1, Math.round(raw));
+  }
+
+  attack(attacker, defender, rng = Math.random) {
+    if (!this.getAttackTargets(attacker).includes(defender)) return null;
+    const damage = this._rollDamage(attacker, defender, attacker.hp, rng);
+    defender.hp = Math.max(0, defender.hp - damage);
+
+    // Direct-combat units strike back if they survive and the attacker is adjacent
+    let counterDamage = 0;
+    if (defender.hp > 0 && !defender.indirect && dist(attacker, defender) === 1) {
+      counterDamage = this._rollDamage(defender, attacker, defender.hp, rng);
+      attacker.hp = Math.max(0, attacker.hp - counterDamage);
+    }
+
+    attacker.hasAttacked = true;
+    attacker.hasMoved = true;
+    const destroyed = defender.hp === 0;
+    const attackerDestroyed = attacker.hp === 0;
+    if (destroyed) {
+      this._removeUnit(defender);
+      this._registerKill(attacker);
+    }
+    if (attackerDestroyed) {
+      this._removeUnit(attacker);
+      this._registerKill(defender);
+    }
+    this._checkRout();
+    return { damage, counterDamage, destroyed, attackerDestroyed };
+  }
+
+  _registerKill(unit) {
+    unit.kills++;
+    if (unit.kills >= PROMOTION_KILLS) unit.promoted = true;
+  }
+
+  // ── Economy ────────────────────────────────────────────────────────────
+
+  incomeOf(player) {
+    let total = 0;
+    for (const row of this.map.cells) {
+      for (const c of row) if (c.owner === player) total += TERRAIN[c.terrain].income || 0;
+    }
+    return total;
+  }
+
+  /** Owned, empty properties where the current player can deploy new units. */
+  buildTiles(player = this.currentPlayer) {
+    const tiles = [];
     for (let y = 0; y < this.map.height; y++) {
       for (let x = 0; x < this.map.width; x++) {
-        const cell = this.map.getCell(x, y);
-        if (!cell) continue;
-        const t = cell.terrain;
-        let owned = false;
-        if (t.type === 'hq') {
-          const u = cell.unit;
-          owned = u ? (u.owner === this.currentPlayer) : (this.turn < 2);
-        }
-        if (t.type === 'city') {
-          if (cell.unit && cell.unit.captures) {
-            owned = cell.unit.owner === this.currentPlayer;
-          } else {
-            owned = false;
-          }
-        }
-        if (owned && t.income) totalIncome += t.income;
+        const c = this.map.cells[y][x];
+        if (c.owner === player && TERRAIN[c.terrain].property && !c.unit) tiles.push({ x, y });
       }
     }
-    // Simplification: give base income per turn
-    totalIncome += 1000 * (this.currentPlayer === 0 ? 1 : 1);
-    this.players[this.currentPlayer].funds += totalIncome;
+    return tiles;
   }
 
-  buyUnit(typeName, spawnX, spawnY) {
-    const p = this.players[this.currentPlayer];
-    const def = UnitTypes.get(typeName);
-    if (!def || p.funds < def.cost) return null;
-    const cell = this.map.getCell(spawnX, spawnY);
-    if (!cell || cell.unit) return null;
-    if (!cell.terrain.canBuild) return null;
-    p.funds -= def.cost;
-    const unit = new Unit(this.currentPlayer, typeName, spawnX, spawnY);
-    this.addUnit(unit);
+  buyUnit(type, x, y) {
+    const def = UNIT_TYPES[type];
+    const player = this.players[this.currentPlayer];
+    if (!def || player.funds < def.cost) return null;
+    if (!this.buildTiles().some(t => t.x === x && t.y === y)) return null;
+    const unit = this.spawn(this.currentPlayer, type, x, y);
+    if (!unit) return null;
+    player.funds -= def.cost;
+    unit.hasMoved = unit.hasAttacked = true; // new units deploy next turn
     return unit;
   }
 
-  setFogOfWar(enabled) {
-    this.fogOfWar = enabled;
+  // ── Turns ──────────────────────────────────────────────────────────────
+
+  captureStatus(x, y) {
+    const p = this.captureProgress[key(x, y)];
+    return p ? p.points : 0;
   }
 
-  calculateFog() {
-    if (!this.fogOfWar) return { visible: null, revealed: null };
-    const visible = new Set();
-    for (const u of this.getPlayerUnits(this.currentPlayer)) {
-      for (let dy = -u.visionRange; dy <= u.visionRange; dy++) {
-        for (let dx = -u.visionRange; dx <= u.visionRange; dx++) {
-          if (Math.abs(dx) + Math.abs(dy) > u.visionRange) continue;
-          const nx = u.x + dx, ny = u.y + dy;
-          if (this.map.isInBounds(nx, ny)) {
-            const k = `${nx},${ny}`;
-            visible.add(k);
-            this.revealedTiles[k] = true;
-          }
-        }
-      }
-    }
-    return { visible, revealed: this.revealedTiles };
-  }
-
-  // === AI ===
-  aiTurn() {
-    const aiUnits = this.getPlayerUnits(1);
-    const playerUnits = this.getPlayerUnits(0);
-
-    for (const unit of aiUnits) {
-      if (unit.hp <= 0 || unit.hasMoved) continue;
-
-      // Find nearest player unit
-      let nearest = null, nearestDist = Infinity;
-      for (const pu of playerUnits) {
-        const d = Math.abs(unit.x - pu.x) + Math.abs(unit.y - pu.y);
-        if (d < nearestDist) { nearestDist = d; nearest = pu; }
-      }
-
-      const targets = this.getAttackTargets(unit);
-      if (targets.length > 0) {
-        if (!unit.hasMoved) {
-          // Move toward nearest target if not in range
-          if (!targets.includes(nearest) && nearest) {
-            const moves = this.getMoveRange(unit);
-            if (moves.length > 0) {
-              moves.sort((a, b) => {
-                const da = Math.abs(a.x - nearest.x) + Math.abs(a.y - nearest.y);
-                const db = Math.abs(b.x - nearest.x) + Math.abs(b.y - nearest.y);
-                return da - db;
-              });
-              const best = moves[0];
-              this.moveUnit(unit, best.x, best.y);
-            }
-          }
-          // Recheck targets after move
-          const newTargets = this.getAttackTargets(unit);
-          if (newTargets.length > 0) {
-            const t = newTargets.reduce((best, t) =>
-              (t.hp < best.hp || (!best) ? t : best), null);
-            this.resolveCombat(unit, t);
-            this.removeDestroyed();
-          }
-        } else {
-          const t = targets.reduce((best, t) =>
-            (t.hp < best.hp || (!best) ? t : best), null);
-          this.resolveCombat(unit, t);
-          this.removeDestroyed();
-        }
+  _processCaptures() {
+    for (const u of this.unitsOf(this.currentPlayer)) {
+      const cell = this.map.cells[u.y][u.x];
+      if (!u.captures || u.hasAttacked || !TERRAIN[cell.terrain].property || cell.owner === u.owner) continue;
+      const k = key(u.x, u.y);
+      const progress = this.captureProgress[k]?.unitId === u.id ? this.captureProgress[k].points : 0;
+      const points = progress + u.hp;
+      if (points >= CAPTURE_POINTS) {
+        delete this.captureProgress[k];
+        const wasHq = cell.terrain === 'hq';
+        cell.owner = u.owner;
+        if (wasHq) return this._declareWinner(u.owner);
       } else {
-        // Move toward nearest enemy
-        if (nearest) {
-          const moves = this.getMoveRange(unit);
-          if (moves.length > 0) {
-            moves.sort((a, b) => {
-              const da = Math.abs(a.x - nearest.x) + Math.abs(a.y - nearest.y);
-              const db = Math.abs(b.x - nearest.x) + Math.abs(b.y - nearest.y);
-              return da - db;
-            });
-            this.moveUnit(unit, moves[0].x, moves[0].y);
-          }
+        this.captureProgress[k] = { unitId: u.id, points };
+      }
+    }
+  }
+
+  _checkRout() {
+    for (const p of [0, 1]) {
+      if (!this.gameOver && this.unitsOf(p).length === 0) this._declareWinner(1 - p);
+    }
+  }
+
+  _declareWinner(player) {
+    this.gameOver = true;
+    this.winner = player;
+  }
+
+  endTurn() {
+    if (this.gameOver) return;
+    this._processCaptures();
+    if (this.gameOver) return;
+
+    this.currentPlayer = 1 - this.currentPlayer;
+    if (this.currentPlayer === 0) this.day++;
+    for (const u of this.units) u.hasMoved = u.hasAttacked = false;
+    this.players[this.currentPlayer].funds += this.incomeOf(this.currentPlayer);
+  }
+
+  // ── Fog of war ─────────────────────────────────────────────────────────
+
+  /** Set of tile keys the given player can see, or null when fog is off. */
+  visibleTiles(player) {
+    if (!this.fogOfWar) return null;
+    const visible = new Set();
+    const reveal = (x, y, r) => {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) + Math.abs(dy) <= r && this.map.inBounds(x + dx, y + dy)) visible.add(key(x + dx, y + dy));
         }
+      }
+    };
+    for (const u of this.unitsOf(player)) reveal(u.x, u.y, u.visionRange);
+    for (let y = 0; y < this.map.height; y++) {
+      for (let x = 0; x < this.map.width; x++) if (this.map.cells[y][x].owner === player) reveal(x, y, 1);
+    }
+    return visible;
+  }
+
+  // ── AI ─────────────────────────────────────────────────────────────────
+
+  /** Plays the whole turn for the current player and ends it. */
+  runAI(rng = Math.random) {
+    const me = this.currentPlayer;
+    const order = this.unitsOf(me).sort((a, b) => b.indirect - a.indirect);
+    for (const unit of order) {
+      if (this.gameOver) return;
+      if (!this.units.includes(unit)) continue;
+      this._aiAct(unit, rng);
+    }
+    if (this.gameOver) return;
+    this._aiBuy(rng);
+    this.endTurn();
+  }
+
+  _aiScoreAttack(unit, target, from) {
+    const dmg = this.estimateDamage(unit, target);
+    const kill = dmg >= target.hp ? 10 : 0;
+    const counter = target.indirect || dist(from, target) > 1 ? 0 : this.estimateDamage(target, unit, Math.max(0, target.hp - dmg)) * 0.6;
+    return dmg * UNIT_TYPES[target.type].cost / 3000 + kill - counter;
+  }
+
+  _aiAct(unit, rng) {
+    const me = unit.owner;
+    const cell = this.map.cells[unit.y][unit.x];
+
+    // Keep capturing if already standing on a property we don't own
+    if (unit.captures && TERRAIN[cell.terrain].property && cell.owner !== me) {
+      this.wait(unit);
+      return;
+    }
+
+    // Ranged units: fire if possible, otherwise reposition
+    if (unit.indirect) {
+      const targets = this.getAttackTargets(unit);
+      if (targets.length) {
+        const best = targets.reduce((a, b) => (this._aiScoreAttack(unit, a, unit) >= this._aiScoreAttack(unit, b, unit) ? a : b));
+        this.attack(unit, best, rng);
+        return;
       }
     }
 
-    // AI buys units if it has funds
-    if (this.players[1].funds >= 7000 && this.turn % 2 === 0) {
-      // Find a buildable cell
+    // Direct units: find the best (tile, target) combination reachable this turn.
+    // With a clear numbers advantage the AI also accepts costly trades so it can't stall.
+    if (!unit.indirect) {
+      const superior = this.unitsOf(me).length >= 2 * this.unitsOf(1 - me).length;
+      const minScore = superior ? -3 : 0;
+      let bestPlan = null;
+      const tiles = [{ x: unit.x, y: unit.y }, ...this.getMoveRange(unit)];
+      for (const tile of tiles) {
+        for (const target of this.getAttackTargets(unit, tile)) {
+          const score = this._aiScoreAttack(unit, target, tile);
+          if (score > minScore && (!bestPlan || score > bestPlan.score)) bestPlan = { tile, target, score };
+        }
+      }
+      if (bestPlan) {
+        if (bestPlan.tile.x !== unit.x || bestPlan.tile.y !== unit.y) this.moveUnit(unit, bestPlan.tile.x, bestPlan.tile.y);
+        this.attack(unit, bestPlan.target, rng);
+        return;
+      }
+    }
+
+    // Otherwise move toward a goal: properties for capturers, enemies for everyone else
+    const goals = [];
+    if (unit.captures) {
       for (let y = 0; y < this.map.height; y++) {
         for (let x = 0; x < this.map.width; x++) {
-          const cell = this.map.getCell(x, y);
-          if (cell?.terrain.canBuild && !cell.unit) {
-            const type = Math.random() > 0.5 ? 'tank' : 'infantry';
-            if (this.players[1].funds >= UnitTypes.get(type).cost) {
-              this.buyUnit(type, x, y);
-            }
-            break;
-          }
+          const c = this.map.cells[y][x];
+          if (TERRAIN[c.terrain].property && c.owner !== me && (!c.unit || c.unit === unit)) goals.push({ x, y, bonus: c.terrain === 'hq' ? 4 : 0 });
         }
       }
     }
+    for (const e of this.unitsOf(1 - me)) goals.push({ x: e.x, y: e.y, bonus: 0 });
+    if (!goals.length) return this.wait(unit);
 
-    this.currentPlayer = 0;
-    this.turn++;
-    this.resetAllUnits();
-    this.removeDestroyed();
+    const field = this._costField(unit, Infinity, true);
+    const goal = goals.reduce((best, g) => {
+      const c = (field.get(key(g.x, g.y)) ?? Infinity) - g.bonus;
+      return c < best.c ? { g, c } : best;
+    }, { g: null, c: Infinity }).g;
+    if (!goal) return this.wait(unit);
 
-    // Check victory
-    if (this.getPlayerUnits(0).length === 0) {
-      this._declareVictor(1);
+    const reverse = this._costField({ x: goal.x, y: goal.y, owner: me, def: unit.def }, Infinity, true);
+    const keepAway = unit.indirect ? unit.def.maxRange : 0;
+    let best = null;
+    for (const t of this.getMoveRange(unit)) {
+      const d = reverse.get(key(t.x, t.y)) ?? Infinity;
+      const score = keepAway ? Math.abs(dist(t, goal) - keepAway) * 10 + d * 0.1 : d;
+      if (!best || score < best.score) best = { t, score };
+    }
+    const here = reverse.get(key(unit.x, unit.y)) ?? Infinity;
+    if (best && (keepAway || best.score < here)) this.moveUnit(unit, best.t.x, best.t.y);
+    else this.wait(unit);
+  }
+
+  _aiBuy(rng) {
+    const me = this.currentPlayer;
+    const funds = () => this.players[me].funds;
+    const infantry = this.unitsOf(me).filter(u => u.captures).length;
+    for (const tile of this.buildTiles(me)) {
+      let type;
+      if (infantry < 3 && funds() >= 1000) type = 'infantry';
+      else {
+        const affordable = ['tank', 'artillery', 'anti_air', 'mech', 'recon', 'infantry'].filter(t => UNIT_TYPES[t].cost <= funds());
+        if (!affordable.length) break;
+        type = affordable[Math.floor(rng() * Math.min(3, affordable.length))];
+      }
+      if (!this.buyUnit(type, tile.x, tile.y)) break;
     }
   }
 
-  // === Serialization ===
+  // ── Serialization ──────────────────────────────────────────────────────
+
   save() {
     return JSON.stringify({
-      mapW: this.map.width, mapH: this.map.height,
-      cells: this.map.cells.map(row => row.map(c => ({
-        terrain: c.terrain.type,
-        unit: c.unit ? { id: c.unit.id } : null,
-      }))),
+      width: this.map.width,
+      height: this.map.height,
+      cells: this.map.cells.map(row => row.map(c => [c.terrain, c.owner])),
       units: this.units.map(u => ({
-        id: u.id, owner: u.owner, type: u.type, hp: u.hp,
-        x: u.x, y: u.y, hasMoved: u.hasMoved, hasAttacked: u.hasAttacked,
-        kills: u.kills, promoted: u.promoted,
+        id: u.id, owner: u.owner, type: u.type, x: u.x, y: u.y, hp: u.hp,
+        hasMoved: u.hasMoved, hasAttacked: u.hasAttacked, kills: u.kills, promoted: u.promoted,
       })),
       players: this.players,
-      turn: this.turn, currentPlayer: this.currentPlayer,
-      fogOfWar: this.fogOfWar, revealedTiles: this.revealedTiles,
+      currentPlayer: this.currentPlayer,
+      day: this.day,
+      fogOfWar: this.fogOfWar,
       captureProgress: this.captureProgress,
-      campaignMode: this.campaignMode,
     });
   }
 
   static load(json) {
-    const data = JSON.parse(json);
-    const map = new MapGrid(data.mapW, data.mapH);
-    for (let y = 0; y < data.mapH; y++) {
-      for (let x = 0; x < data.mapW; x++) {
-        if (data.cells[y][x]?.terrain) {
-          map.setTerrain(x, y, data.cells[y][x].terrain);
-        }
-      }
-    }
-    const state = new GameState(map);
-    state.players = data.players;
-    state.turn = data.turn;
-    state.currentPlayer = data.currentPlayer;
-    state.fogOfWar = data.fogOfWar;
-    state.revealedTiles = data.revealedTiles || {};
-    state.captureProgress = data.captureProgress || {};
-    state.campaignMode = data.campaignMode || null;
-    state.units = [];
+    const data = typeof json === 'string' ? JSON.parse(json) : json;
+    const map = new MapGrid(data.width, data.height);
+    data.cells.forEach((row, y) => row.forEach(([terrain, owner], x) => {
+      map.cells[y][x].terrain = terrain;
+      map.cells[y][x].owner = owner;
+    }));
+    const gs = new GameState(map, { names: data.players.map(p => p.name), fog: data.fogOfWar });
+    gs.players = data.players;
+    gs.currentPlayer = data.currentPlayer;
+    gs.day = data.day;
+    gs.captureProgress = data.captureProgress || {};
     for (const ud of data.units) {
       const u = new Unit(ud.owner, ud.type, ud.x, ud.y);
-      u.id = ud.id;
-      u.hp = ud.hp;
-      u.hasMoved = ud.hasMoved;
-      u.hasAttacked = ud.hasAttacked;
-      u.kills = ud.kills;
-      u.promoted = ud.promoted;
-      state.addUnit(u);
+      Object.assign(u, ud);
+      gs.addUnit(u);
     }
-    return state;
+    Unit._idCounter = Math.max(Unit._idCounter, ...data.units.map(u => u.id), 0);
+    return gs;
   }
 }
 
-// === Campaign ===
-const Campaign = {
-  missions: [
-    {
-      id: 1, name: 'Boot Camp', map: MapGrid.map1,
-      intro: 'Welcome to Front Wars, Commander. The enemy has occupied the western territories. Lead your infantry into your first engagement. Capture the enemy HQ to secure victory.',
-      playerUnits: [{ type: 'infantry', x: 1, y: 0 }, { type: 'infantry', x: 1, y: 1 }],
-      enemyUnits: [{ type: 'infantry', x: 8, y: 9 }, { type: 'infantry', x: 7, y: 9 }],
-      fog: false,
-    },
-    {
-      id: 2, name: 'Armored Advance', map: MapGrid.map2,
-      intro: 'Your success has caught the enemy off guard. They\'re reinforcing their position with armor. Deploy your tanks and push through the mountain pass.',
-      playerUnits: [{ type: 'tank', x: 1, y: 0 }, { type: 'infantry', x: 0, y: 2 }, { type: 'recon', x: 2, y: 1 }],
-      enemyUnits: [{ type: 'tank', x: 13, y: 14 }, { type: 'infantry', x: 14, y: 12 }, { type: 'mech', x: 12, y: 13 }],
-      fog: false,
-    },
-    {
-      id: 3, name: 'Fog of War', map: MapGrid.map3,
-      intro: 'Intel reports show a large enemy force advancing under cover of darkness. Visibility is limited — watch your flanks. Deploy recon units to scout ahead.',
-      playerUnits: [{ type: 'recon', x: 2, y: 0 }, { type: 'tank', x: 1, y: 2 }, { type: 'artillery', x: 0, y: 1 }, { type: 'infantry', x: 2, y: 1 }],
-      enemyUnits: [{ type: 'tank', x: 17, y: 19 }, { type: 'artillery', x: 18, y: 17 }, { type: 'infantry', x: 19, y: 18 }, { type: 'anti_air', x: 16, y: 18 }],
-      fog: true,
-    },
-    {
-      id: 4, name: 'Naval Blockade', map: MapGrid.map3,
-      intro: 'The enemy has fortified their island stronghold. Combined arms are essential — infantry to capture, artillery to bombard, and tanks to break through.',
-      playerUnits: [{ type: 'tank', x: 3, y: 1 }, { type: 'artillery', x: 1, y: 3 }, { type: 'infantry', x: 2, y: 0 }, { type: 'anti_air', x: 0, y: 2 }, { type: 'mech', x: 3, y: 2 }],
-      enemyUnits: [{ type: 'tank', x: 17, y: 18 }, { type: 'tank', x: 16, y: 19 }, { type: 'artillery', x: 18, y: 16 }, { type: 'infantry', x: 19, y: 17 }, { type: 'mech', x: 17, y: 17 }],
-      fog: false,
-    },
-    {
-      id: 5, name: 'Final Stand', map: MapGrid.map3,
-      intro: 'This is it, Commander. The enemy has thrown everything at us. All unit types are in play. Destroy their HQ and end this war once and for all.',
-      playerUnits: [{ type: 'tank', x: 1, y: 1 }, { type: 'artillery', x: 0, y: 3 }, { type: 'infantry', x: 2, y: 0 }, { type: 'recon', x: 3, y: 1 }, { type: 'anti_air', x: 1, y: 2 }],
-      enemyUnits: [{ type: 'tank', x: 18, y: 18 }, { type: 'artillery', x: 19, y: 16 }, { type: 'infantry', x: 17, y: 19 }, { type: 'mech', x: 18, y: 17 }, { type: 'anti_air', x: 16, y: 19 }, { type: 'recon', x: 19, y: 18 }],
-      fog: true,
-    },
-  ],
-};
+/** Create a ready-to-play game for a campaign mission index. */
+function createMission(index) {
+  const m = CAMPAIGN[index];
+  const gs = new GameState(MAPS[m.map](), { names: ['Commander', 'Enemy'], fog: m.fog });
+  for (const [type, x, y] of m.player) gs.spawn(0, type, x, y);
+  for (const [type, x, y] of m.enemy) gs.spawn(1, type, x, y);
+  return gs;
+}
+
+/** Create a skirmish game (vs AI or local 2-player). */
+function createSkirmish({ twoPlayer = false, fog = !twoPlayer } = {}) {
+  const gs = new GameState(MAPS.skirmish(), { names: twoPlayer ? ['Player 1', 'Player 2'] : ['Player', 'AI'], fog });
+  gs.spawn(0, 'infantry', 1, 0); gs.spawn(0, 'infantry', 2, 1); gs.spawn(0, 'tank', 0, 1);
+  gs.spawn(1, 'infantry', 8, 9); gs.spawn(1, 'infantry', 7, 8); gs.spawn(1, 'tank', 9, 8);
+  return gs;
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { TERRAIN, UNIT_TYPES, CAPTURE_POINTS, Unit, MapGrid, MAPS, CAMPAIGN, GameState, createMission, createSkirmish };
+}

@@ -1,0 +1,10 @@
+{
+  "name": "frontwars",
+  "version": "1.0.0",
+  "description": "Turn-based tactics game in the browser, written in vanilla JavaScript",
+  "private": true,
+  "scripts": {
+    "test": "node --test",
+    "start": "npx --yes serve ."
+  }
+}
